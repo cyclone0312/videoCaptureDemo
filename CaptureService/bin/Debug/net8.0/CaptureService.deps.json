@@ -1,0 +1,117 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v8.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v8.0": {
+      "CaptureService/1.0.0": {
+        "dependencies": {
+          "FFMpegCore": "5.4.0"
+        },
+        "runtime": {
+          "CaptureService.dll": {}
+        }
+      },
+      "FFMpegCore/5.4.0": {
+        "dependencies": {
+          "Instances": "3.0.2",
+          "System.Text.Json": "9.0.10"
+        },
+        "runtime": {
+          "lib/netstandard2.0/FFMpegCore.dll": {
+            "assemblyVersion": "5.0.0.0",
+            "fileVersion": "5.0.0.0"
+          }
+        }
+      },
+      "Instances/3.0.2": {
+        "runtime": {
+          "lib/netstandard2.0/Instances.dll": {
+            "assemblyVersion": "1.0.0.0",
+            "fileVersion": "1.0.0.0"
+          }
+        }
+      },
+      "System.IO.Pipelines/9.0.10": {
+        "runtime": {
+          "lib/net8.0/System.IO.Pipelines.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.1025.47515"
+          }
+        }
+      },
+      "System.Text.Encodings.Web/9.0.10": {
+        "runtime": {
+          "lib/net8.0/System.Text.Encodings.Web.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.1025.47515"
+          }
+        },
+        "runtimeTargets": {
+          "runtimes/browser/lib/net8.0/System.Text.Encodings.Web.dll": {
+            "rid": "browser",
+            "assetType": "runtime",
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.1025.47515"
+          }
+        }
+      },
+      "System.Text.Json/9.0.10": {
+        "dependencies": {
+          "System.IO.Pipelines": "9.0.10",
+          "System.Text.Encodings.Web": "9.0.10"
+        },
+        "runtime": {
+          "lib/net8.0/System.Text.Json.dll": {
+            "assemblyVersion": "9.0.0.0",
+            "fileVersion": "9.0.1025.47515"
+          }
+        }
+      }
+    }
+  },
+  "libraries": {
+    "CaptureService/1.0.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    },
+    "FFMpegCore/5.4.0": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-nymhPWpwvBaB4fOqf0thxg7Inm8SrruFQLdCMFEDKD8S3hy0/iV2vuKaJvaL9ZnbJx/2rJCHnJXOymo2apXovg==",
+      "path": "ffmpegcore/5.4.0",
+      "hashPath": "ffmpegcore.5.4.0.nupkg.sha512"
+    },
+    "Instances/3.0.2": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-LfhegDpmA8PuHW58RmgVvCDG/mfVCTU+Vhy4ppmXLJfAer33Xl0NocDy92OwSL6CnkVdx41O/I0+BjNhU1JtMQ==",
+      "path": "instances/3.0.2",
+      "hashPath": "instances.3.0.2.nupkg.sha512"
+    },
+    "System.IO.Pipelines/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-lwI0mhHcCxMtNSxB5ate9Gc9petWovRBUprtjz2yiIDDZPGBIaUiqNzQHJzjPuzTnvNbEMilpAXjDguKsU/2Fg==",
+      "path": "system.io.pipelines/9.0.10",
+      "hashPath": "system.io.pipelines.9.0.10.nupkg.sha512"
+    },
+    "System.Text.Encodings.Web/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-znmiJFUa0GGwq7t6ShUKBDRlPsNJaudNFI7rVeyGnRBhiRMegBvu2GRcadThP/QX/a5UpGgZbe6tolDooobj/Q==",
+      "path": "system.text.encodings.web/9.0.10",
+      "hashPath": "system.text.encodings.web.9.0.10.nupkg.sha512"
+    },
+    "System.Text.Json/9.0.10": {
+      "type": "package",
+      "serviceable": true,
+      "sha512": "sha512-XM02ZBnzxk7Ti6l9YRy8Bp639wANqJzJzw4W4VYiCh+HXY9hBOWkGB4k89OLP/s/RxgM02P4a/mWcJTgFiLf1Q==",
+      "path": "system.text.json/9.0.10",
+      "hashPath": "system.text.json.9.0.10.nupkg.sha512"
+    }
+  }
+}

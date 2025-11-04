@@ -1,0 +1,58 @@
+﻿<Window x:Class="PlaybackApp.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:PlaybackApp"
+        xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
+        xmlns:xctk="http://schemas.xceed.com/wpf/xaml/toolkit"
+        mc:Ignorable="d"
+        Title="视频回放 Demo (使用 LibVLC)"
+        Height="600"
+        Width="800"
+        Loaded="Window_Loaded"
+        Unloaded="Window_Unloaded">
+
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0"
+                Orientation="Horizontal"
+                Margin="5">
+            <TextBlock Text="开始时间:"
+                    VerticalAlignment="Center"
+                    Margin="5,0"/>
+            <xctk:DateTimePicker x:Name="DtpStartTime"
+                    Width="180"/>
+
+            <TextBlock Text="结束时间:"
+                    VerticalAlignment="Center"
+                    Margin="10,0,5,0"/>
+            <xctk:DateTimePicker x:Name="DtpEndTime"
+                    Width="180"/>
+
+            <Button x:Name="BtnPlay"
+                    Content="查询并播放"
+                    Width="100"
+                    Margin="10,0"
+                    Click="BtnPlay_Click"/>
+        </StackPanel>
+
+        <Border Grid.Row="1"
+                BorderBrush="Black"
+                BorderThickness="1">
+            <vlc:VideoView x:Name="VideoView"/>
+        </Border>
+
+        <StatusBar Grid.Row="2">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusText"
+                        Text="请选择时间并点击播放"/>
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

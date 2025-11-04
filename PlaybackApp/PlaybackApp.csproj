@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="ffmpeg.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="ffprobe.exe">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Extended.Wpf.Toolkit" Version="5.0.0" />
+    <PackageReference Include="FFMpegCore" Version="5.4.0" />
+    <PackageReference Include="LibVLCSharp.WPF" Version="3.9.4" />
+    <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.21" />
+  </ItemGroup>
+
+</Project>
