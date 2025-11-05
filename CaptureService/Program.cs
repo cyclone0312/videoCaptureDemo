@@ -4,11 +4,16 @@
 using System.Diagnostics;      // 用于启动和管理 FFmpeg 进程
 using System.IO;                // 用于文件和目录操作
 using System.Threading.Tasks;   // 用于异步编程支持
+using System.Collections.Generic; // 用于支持 List<string>
+using System.Text.RegularExpressions; // 用于更复杂的解析
+using System.Linq;              // 用于 LINQ 查询方法（如 FirstOrDefault）
 
 /// <summary>
-/// USB摄像头视频采集服务
-/// 核心原理：通过 DirectShow (Windows 专用的多媒体框架) 访问 USB 摄像头，
-/// 使用 FFmpeg 进行实时录制，并自动按时间分段保存视频文件。
+/// USB摄像头视频采集服务 (V2 - 带自动设备发现)
+/// 核心原理：
+/// 1. 启动时，调用 "ffmpeg -list_devices" 来自动查找可用的音视频设备。
+/// 2. 自动选择第一个找到的视频和音频设备。
+/// 3. 使用 FFmpeg 进行实时录制，并自动按时间分段保存视频文件。
 /// </summary>
 class Program
 {
@@ -20,17 +25,73 @@ class Program
     {
         Console.WriteLine("Capture Service starting...");
 
-        // ============================================================
-        // 步骤 1: 配置摄像头设备名称
-        // ============================================================
-        // 如何获取设备名称：
-        // 在命令行运行: ffmpeg -list_devices true -f dshow -i dummy
-        // 从输出的 "DirectShow video devices" 列表中复制完整的设备名称
-        string videoDeviceName = "Integrated Camera"; // <-- 替换为您的实际设备名称
+        string videoDeviceName;
+        string audioDeviceName;
 
-        // 音频设备（本示例不录制音频，如需音频可取消注释并配置）
-        // 获取方式同上，在 "DirectShow audio devices" 列表中查找
-        // string audioDeviceName = "Microphone Array (Realtek Audio)";
+        // ============================================================
+        // 步骤 1: (新!) 自动发现设备 (V3 - 带优先级选择)
+        // ============================================================
+        try
+        {
+            Console.WriteLine("Discovering devices...");
+
+            // 1. 自动查找视频设备
+            List<string> videoDevices = GetDirectShowDevices("video");
+            if (videoDevices.Count == 0)
+            {
+                Console.WriteLine("Error: No DirectShow video devices found.");
+                return;
+            }
+
+            // (--- 新的智能选择逻辑 ---)
+            // 优先选择名字中包含 "USB" 的设备
+            string? preferredVideoDevice = videoDevices.FirstOrDefault(name => name.Contains("USB", StringComparison.OrdinalIgnoreCase));
+
+            if (preferredVideoDevice != null)
+            {
+                videoDeviceName = preferredVideoDevice;
+                Console.WriteLine($"✓ Prioritized External (USB) Video Device: {videoDeviceName}");
+            }
+            else
+            {
+                // 回退：如果没有 "USB" 设备，则选择列表中的第一个
+                videoDeviceName = videoDevices[0];
+                Console.WriteLine($"⚠ No USB device found. Defaulting to first Video Device: {videoDeviceName}");
+            }
+            // (--- 智能选择逻辑结束 ---)
+
+
+            // 2. 自动查找音频设备
+            List<string> audioDevices = GetDirectShowDevices("audio");
+            if (audioDevices.Count == 0)
+            {
+                Console.WriteLine("Error: No DirectShow audio devices found.");
+                return;
+            }
+
+            // (--- 新的智能选择逻辑 ---)
+            // 优先选择名字中包含 "USB" 的设备 (通常是摄像头自带的麦克风)
+            string? preferredAudioDevice = audioDevices.FirstOrDefault(name => name.Contains("USB", StringComparison.OrdinalIgnoreCase));
+
+            if (preferredAudioDevice != null)
+            {
+                audioDeviceName = preferredAudioDevice;
+                Console.WriteLine($"✓ Prioritized External (USB) Audio Device: {audioDeviceName}");
+            }
+            else
+            {
+                // 回退：如果没有 "USB" 音频，则选择列表中的第一个 (可能是板载麦克风)
+                audioDeviceName = audioDevices[0];
+                Console.WriteLine($"⚠ No USB device found. Defaulting to first Audio Device: {audioDeviceName}");
+            }
+            // (--- 智能选择逻辑结束 ---)
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to discover devices: {ex.Message}");
+            Console.WriteLine("Please ensure ffmpeg.exe is in your PATH or application directory.");
+            return;
+        }
 
         // ============================================================
         // 步骤 2: 配置视频文件存储路径
@@ -65,28 +126,55 @@ class Program
                 // 示例输出：CAM_USB-20251104-143025.mp4
                 string outputTemplate = Path.Combine(outputDirectory, "CAM_USB-%Y%m%d-%H%M%S.mp4");
 
-                Console.WriteLine($"Starting FFmpeg capture from device: {videoDeviceName}");
+                Console.WriteLine($"Starting FFmpeg capture...");
+                Console.WriteLine($"  Video: {videoDeviceName}");
+                Console.WriteLine($"  Audio: {audioDeviceName}");
 
                 // ============================================================
-                // 步骤 5: 构建 FFmpeg 命令行参数
+                // 步骤 5: (关键改动) 构建包含音视频和时间戳水印的 FFmpeg 参数
                 // ============================================================
+                // (新增!) 构建 drawtext 滤镜
+                //
+                // (正确的转义方案!)
+                // 关键: 不使用 @ 字符串,手动双重转义
+                // C# 字符串: \\  -> 编译后: \  -> FFmpeg 收到: \
+                string drawtextFilter =
+                    "drawtext=" +
+                    "fontfile=Arial:" +
+                    "expansion=strftime:" +
+                    "text=%Y-%m-%d\\\\ %H\\\\:%M\\\\:%S:" +  // 四个反斜杠在 C# 中变成两个,FFmpeg 收到 \\ 和 \:
+                    "fontsize=28:" +
+                    "fontcolor=white@0.9:" +
+                    "box=1:" +
+                    "boxcolor=black@0.6:" +
+                    "boxborderw=8:" +
+                    "x=w-tw-15:" +
+                    "y=15";
+
                 // 完整命令相当于在命令行执行：
-                // ffmpeg -f dshow -i video="Integrated Camera" -c:v libx264 -preset ultrafast -pix_fmt yuv420p -an -f segment -segment_time 600 -strftime 1 "输出路径"
+                // ffmpeg -f dshow -i video="设备名":audio="音频设备名" -vf "drawtext=..." -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -f segment -segment_time 600 -strftime 1 -segment_format_options movflags=frag_keyframe+empty_moov "输出路径"
                 //
                 // 各参数详解：
                 // -f dshow                      指定使用 DirectShow 输入格式 (Windows 系统专用)
-                // -i video="设备名"             指定视频输入源为特定的摄像头设备
+                // -i video="...":audio="..."    (关键) 同时指定视频和音频输入源
+                // -vf "drawtext=..."            (新增!) 添加视频滤镜，在视频上烧录时间戳水印
                 // -c:v libx264                  使用 H.264 编码器压缩视频 (必须编码，不能用 copy)
                 // -preset ultrafast             编码速度预设为"超快"，降低CPU占用，但文件会稍大
                 // -pix_fmt yuv420p              设置像素格式为 YUV 4:2:0，确保最广泛的播放器兼容性
-                // -an                           禁用音频流 (audio none)
+                // -c:a aac                      使用 AAC 编码器压缩音频
                 // -f segment                    使用分段输出格式，自动将长视频切割成多个文件
                 // -segment_time 600             每个分段的时长 (秒)，600秒 = 10分钟
                 // -strftime 1                   启用时间戳文件名功能，支持 %Y %m %d 等变量
-                string ffmpegArgs = $"-f dshow -i video=\"{videoDeviceName}\" " +
+                // -segment_format_options movflags=frag_keyframe+empty_moov
+                //                               (关键!) 生成 Fragmented MP4，使正在录制的文件可实时播放
+                //                               frag_keyframe: 按关键帧创建分片
+                //                               empty_moov: 在文件开头写入空索引，支持流式传输
+                string ffmpegArgs = $"-f dshow -i video=\"{videoDeviceName}\":audio=\"{audioDeviceName}\" " +
+                    $"-vf \"{drawtextFilter}\" " +  // (新增!) 添加时间戳水印滤镜
                     $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p " +
-                    $"-an " +
+                    $"-c:a aac " +
                     $"-f segment -segment_time 600 -strftime 1 " +
+                    $"-segment_format_options movflags=frag_keyframe+empty_moov " +
                     $"\"{outputTemplate}\"";
 
                 Console.WriteLine($"FFmpeg arguments: {ffmpegArgs}");
@@ -180,5 +268,77 @@ class Program
                 await Task.Delay(10000);
             }
         }
+    }
+
+    // ============================================================
+    // (新功能) 辅助函数：调用 FFmpeg 并解析设备列表
+    // ============================================================
+    /// <summary>
+    /// 调用 "ffmpeg -list_devices" 并解析出指定类型的设备列表
+    /// </summary>
+    /// <param name="deviceType"> "video" 或 "audio" </param>
+    /// <returns>一个包含设备名称的字符串列表</returns>
+    private static List<string> GetDirectShowDevices(string deviceType)
+    {
+        var devices = new List<string>();
+        var processInfo = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = "-list_devices true -f dshow -i dummy", // FFmpeg 的设备列表命令
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,  // FFmpeg 将列表输出到 StandardError
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using (var process = Process.Start(processInfo))
+        {
+            if (process == null)
+            {
+                throw new Exception("Failed to start ffmpeg for device listing.");
+            }
+
+            // 读取 FFmpeg 的全部输出
+            string output = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            // 开始解析输出
+            using (var reader = new StringReader(output))
+            {
+                string? line;
+                string deviceTypeMarker = $"({deviceType})"; // 例如: "(video)" 或 "(audio)"
+
+                while ((line = reader.ReadLine()) != null)
+                {
+                    // 检查这一行是否包含我们要找的设备类型
+                    // 例如: [dshow @ ...] "1080P USB Camera" (video)
+                    if (line.Contains("[dshow") && line.Contains(deviceTypeMarker))
+                    {
+                        // 解析设备名称
+                        string? deviceName = ParseDeviceName(line);
+                        if (deviceName != null)
+                        {
+                            devices.Add(deviceName);
+                        }
+                    }
+                }
+            }
+        }
+        return devices;
+    }
+
+    /// <summary>
+    /// (新功能) 辅助函数：从 FFmpeg 输出行中提取设备名称
+    /// 例如: 从 "[dshow]  \"1080P USB Camera\"" 中提取 "1080P USB Camera"
+    /// </summary>
+    private static string? ParseDeviceName(string line)
+    {
+        int firstQuote = line.IndexOf('"');
+        if (firstQuote == -1) return null;
+
+        int secondQuote = line.IndexOf('"', firstQuote + 1);
+        if (secondQuote == -1) return null;
+
+        return line.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
     }
 }

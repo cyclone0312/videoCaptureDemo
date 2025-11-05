@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("CaptureService")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+2e9fc5c63a6d255e68e59bfdfcbd783958195b6d")]
 [assembly: System.Reflection.AssemblyProductAttribute("CaptureService")]
 [assembly: System.Reflection.AssemblyTitleAttribute("CaptureService")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
