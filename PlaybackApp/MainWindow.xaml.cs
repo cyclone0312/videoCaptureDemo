@@ -31,6 +31,15 @@ namespace PlaybackApp
         // (新!) 添加一个标志,防止 KeyDown 的 IsRepeat 属性干扰
         private bool _isRewinding = false;
 
+        // (新!) 标志：是否正在播放"实时流"（需要跳转到末尾）
+        private bool _isLivePlayback = false;
+
+        // (新!) 记录当前正在播放的实时文件路径
+        private string? _currentLiveFilePath = null;
+
+        // (新!) 添加一个定时器，用于定期检查是否有新的录像文件
+        private System.Windows.Threading.DispatcherTimer? _liveMonitorTimer;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -60,12 +69,19 @@ namespace PlaybackApp
             {
                 _mediaPlayer.LengthChanged += MediaPlayer_LengthChanged;
                 _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
+                _mediaPlayer.Playing += MediaPlayer_Playing; // (新!) 订阅播放开始事件
+                _mediaPlayer.EndReached += MediaPlayer_EndReached; // (新!) 订阅播放结束事件
             }
 
             // (新!) 初始化快退定时器
             _rewindTimer = new System.Windows.Threading.DispatcherTimer();
             _rewindTimer.Interval = TimeSpan.FromMilliseconds(250); // 每 250 毫秒跳转一次
             _rewindTimer.Tick += RewindTimer_Tick;
+
+            // (新!) 初始化实时监控定时器
+            _liveMonitorTimer = new System.Windows.Threading.DispatcherTimer();
+            _liveMonitorTimer.Interval = TimeSpan.FromSeconds(5); // 每 5 秒检查一次
+            _liveMonitorTimer.Tick += LiveMonitorTimer_Tick;
         }
 
         // (新!) 定时器触发的事件
@@ -90,6 +106,61 @@ namespace PlaybackApp
                     // 更新状态文本
                     StatusText.Text = $"快退中... {FormatTime((long)(newPosition * totalDuration))}";
                 }
+            }
+        }
+
+        // (新!) 实时监控定时器触发的事件
+        // 每 5 秒检查一次是否有新的录像文件生成
+        private void LiveMonitorTimer_Tick(object? sender, EventArgs e)
+        {
+            // 只有在实时播放模式下才检查
+            if (_currentLiveFilePath == null) return;
+
+            try
+            {
+                Console.WriteLine("=== 定时器检查新文件 ===");
+
+                // 查找最新的文件
+                string? latestFile = _recordingService.FindLatestLiveFile();
+
+                if (latestFile == null)
+                {
+                    Console.WriteLine("⚠ 未找到任何文件");
+                    return;
+                }
+
+                Console.WriteLine($"当前播放: {Path.GetFileName(_currentLiveFilePath)}");
+                Console.WriteLine($"最新文件: {Path.GetFileName(latestFile)}");
+
+                // 如果发现了新文件（文件路径不同）
+                if (latestFile != _currentLiveFilePath)
+                {
+                    Console.WriteLine("✓ 发现新文件，立即切换！");
+                    StatusText.Text = $"定时器发现新文件，正在切换: {Path.GetFileName(latestFile)}...";
+
+                    // 更新当前文件路径
+                    _currentLiveFilePath = latestFile;
+
+                    // 设置标志，让播放器跳转到新文件的末尾
+                    _isLivePlayback = true;
+
+                    // 播放新文件
+                    if (_libVLC != null && _mediaPlayer != null)
+                    {
+                        var media = new Media(_libVLC, latestFile);
+                        media.AddOption(":live-caching=300");
+                        _mediaPlayer.Play(media);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine("→ 仍是同一文件，继续等待...");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"✗ 监控文件失败: {ex.Message}");
+                StatusText.Text = $"监控文件失败: {ex.Message}";
             }
         }
 
@@ -120,6 +191,9 @@ namespace PlaybackApp
 
             try
             {
+                // (重要!) 清除实时播放标志
+                _isLivePlayback = false;
+
                 // 2. (新!) 创建一个 Progress 对象，它会自动在UI线程上更新 StatusText
                 var progress = new Progress<string>(message =>
                 {
@@ -136,8 +210,15 @@ namespace PlaybackApp
                     return;
                 }
 
-                // 4. (不变) 播放剪辑好的文件 (这是 MainWindow 的职责)
+                // 3. (不变) 播放剪辑好的文件 (这是 MainWindow 的职责)
                 StatusText.Text = "正在播放...";
+
+                // (新!) 清除实时播放相关标志
+                _currentLiveFilePath = null;
+                _isLivePlayback = false;
+
+                // (新!) 停止实时监控定时器
+                _liveMonitorTimer?.Stop();
 
                 if (_libVLC != null && _mediaPlayer != null)
                 {
@@ -190,14 +271,22 @@ namespace PlaybackApp
                 }
 
                 // 3. (不变) 播放文件 (这是 MainWindow 的职责)
-                StatusText.Text = $"正在播放实时画面 (来自: {Path.GetFileName(latestFile)})...";
+                StatusText.Text = "正在加载实时画面，准备跳转...";
+
+                // (新!) 记录当前正在播放的文件路径
+                _currentLiveFilePath = latestFile;
+
+                // (重要!) 设置实时播放标志，告诉 Playing 事件处理器需要跳转到末尾
+                _isLivePlayback = true;
+
+                // (新!) 启动定时器，定期检查是否有新文件
+                _liveMonitorTimer?.Start();
 
                 // 创建 Media 对象并添加低延迟选项
-                // ":live-caching=300" 告诉 VLC 仅缓冲 300 毫秒的数据
-                // 这强制它播放"实时边缘"，而不是从文件开头播放
                 var media = new Media(_libVLC, latestFile);
                 media.AddOption(":live-caching=300");
 
+                // 直接播放，跳转逻辑在 MediaPlayer_Playing 事件中处理
                 _mediaPlayer.Play(media);
             }
             catch (Exception ex)
@@ -260,8 +349,126 @@ namespace PlaybackApp
         }
 
         /// <summary>
-        /// (播放器事件) 当播放时间改变时 (每秒触发多次) 触发
+        /// (新!) (播放器事件) 当播放开始时触发
+        /// 用于实时播放时自动跳转到视频末尾
         /// </summary>
+        private void MediaPlayer_Playing(object? sender, EventArgs e)
+        {
+            // 只有在"实时播放"模式下才跳转到末尾
+            if (_isLivePlayback && _mediaPlayer != null && _mediaPlayer.IsSeekable)
+            {
+                // (美化方案!) 跳转期间隐藏视频，避免看到绿屏
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (_mediaPlayer != null && _mediaPlayer.Length > 0)
+                    {
+                        // 1. 隐藏视频控件
+                        VideoView.Visibility = Visibility.Hidden;
+                        StatusText.Text = "正在跳转到实时位置，请稍候...";
+
+                        // 2. 计算目标位置（最后30秒）
+                        long thirtySecondsInMs = 30 * 1000;
+                        long targetTime = Math.Max(0, _mediaPlayer.Length - thirtySecondsInMs);
+
+                        // 3. 使用 Time 跳转
+                        _mediaPlayer.Time = targetTime;
+
+                        // 4. 等待4.5秒让跳转完成，然后显示视频
+                        Task.Delay(4500).ContinueWith(_ =>
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                VideoView.Visibility = Visibility.Visible;
+                                StatusText.Text = "正在播放实时画面...";
+                            });
+                        });
+                    }
+                }));
+
+                // 清除标志，避免重复跳转
+                _isLivePlayback = false;
+            }
+            else
+            {
+                // (修复!) 确保非实时播放模式下视频是可见的
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    VideoView.Visibility = Visibility.Visible;
+                }));
+            }
+        }
+
+        /// <summary>
+        /// (新!) (播放器事件) 当视频播放到末尾时触发
+        /// 实时播放模式下，等待5秒后重新查找并播放最新文件
+        /// </summary>
+        private void MediaPlayer_EndReached(object? sender, EventArgs e)
+        {
+            // 只有在实时播放模式下才处理
+            if (_currentLiveFilePath != null)
+            {
+                // (重要!) 使用 BeginInvoke 而不是 Invoke，避免死锁
+                Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    try
+                    {
+                        Console.WriteLine("=== 播放到文件末尾，等待10秒后查找新文件 ===");
+                        StatusText.Text = "已到达文件末尾，等待新文件生成（10秒后重试）...";
+
+                        // 等待10秒，给录制服务时间创建新文件
+                        await Task.Delay(10000);
+
+                        Console.WriteLine("=== 10秒已过，现在查找最新文件 ===");
+
+                        // 查找最新的文件
+                        string? latestFile = _recordingService.FindLatestLiveFile();
+
+                        if (latestFile == null)
+                        {
+                            Console.WriteLine("✗ 未找到任何录像文件");
+                            StatusText.Text = "实时播放已结束：未找到任何录像文件。";
+                            _currentLiveFilePath = null;
+                            _liveMonitorTimer?.Stop();
+                            return;
+                        }
+
+                        Console.WriteLine($"当前文件: {Path.GetFileName(_currentLiveFilePath)}");
+                        Console.WriteLine($"最新文件: {Path.GetFileName(latestFile)}");
+
+                        // 无论是不是新文件，都重新播放最新文件
+                        // 这样即使文件名相同，也能继续播放（文件在持续增长）
+                        if (latestFile != _currentLiveFilePath)
+                        {
+                            Console.WriteLine("✓ 发现新文件！切换播放");
+                            StatusText.Text = $"检测到新文件，正在切换: {Path.GetFileName(latestFile)}...";
+                        }
+                        else
+                        {
+                            Console.WriteLine("→ 仍是同一文件，但重新播放以获取最新内容");
+                            StatusText.Text = "重新加载当前文件的最新内容...";
+                        }
+
+                        _currentLiveFilePath = latestFile;
+                        _isLivePlayback = true; // 设置标志，跳转到新文件末尾
+
+                        // 播放（或重新播放）最新文件
+                        if (_libVLC != null && _mediaPlayer != null)
+                        {
+                            var media = new Media(_libVLC, latestFile);
+                            media.AddOption(":live-caching=300");
+                            _mediaPlayer.Play(media);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"✗ 切换文件失败: {ex.Message}");
+                        StatusText.Text = $"切换文件失败: {ex.Message}";
+                    }
+                }));
+            }
+        }        /// <summary>
+                 /// (播放器事件) 当播放时间改变时 (每秒触发多次) 触发
+                 /// </summary>
         private void MediaPlayer_TimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
         {
             // 如果用户正在拖动滑块，立即停止，不更新任何内容
@@ -299,7 +506,18 @@ namespace PlaybackApp
 
                 if (_mediaPlayer != null)
                 {
-                    TimeText.Text = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
+                    // (改进!) 在实时播放模式下，显示实际时间而不是视频时间
+                    if (_currentLiveFilePath != null)
+                    {
+                        // 实时模式：显示当前系统时间
+                        string currentTime = DateTime.Now.ToString("HH:mm:ss");
+                        TimeText.Text = $"实时播放 - {currentTime}";
+                    }
+                    else
+                    {
+                        // 普通模式：显示视频播放时间
+                        TimeText.Text = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
+                    }
                 }
             });
         }

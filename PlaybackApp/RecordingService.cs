@@ -25,7 +25,7 @@ namespace PlaybackApp
 
         /// <summary>
         /// 查找最新的实时文件。
-        /// (从 BtnPlayLive_Click 中提取的逻辑)
+        /// (改进!) 使用文件名中的时间戳排序，而不是 LastWriteTime
         /// </summary>
         public string? FindLatestLiveFile()
         {
@@ -35,9 +35,25 @@ namespace PlaybackApp
             }
 
             var directory = new DirectoryInfo(_videoDirectory);
-            var latestFile = directory.GetFiles("CAM_USB-*.mp4")
-                                      .OrderByDescending(f => f.LastWriteTime)
-                                      .FirstOrDefault();
+            var files = directory.GetFiles("CAM_USB-*.mp4")
+                                 .OrderByDescending(f => f.Name) // (关键!) 按文件名排序，文件名包含时间戳
+                                 .ToList();
+
+            // (调试) 打印所有文件
+            Console.WriteLine("=== 查找最新文件 (按文件名排序) ===");
+            foreach (var file in files.Take(3)) // 只显示前3个
+            {
+                Console.WriteLine($"  {file.Name}");
+                Console.WriteLine($"    创建时间: {file.CreationTime}");
+                Console.WriteLine($"    修改时间: {file.LastWriteTime}");
+                Console.WriteLine($"    文件大小: {file.Length / 1024 / 1024} MB");
+            }
+
+            var latestFile = files.FirstOrDefault();
+            if (latestFile != null)
+            {
+                Console.WriteLine($"✓ 选中: {latestFile.Name}");
+            }
 
             return latestFile?.FullName;
         }
