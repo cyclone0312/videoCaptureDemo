@@ -17,10 +17,14 @@ namespace PlaybackApp
         // !!! (重要) 确保这个路径和您 CaptureService 的路径一致
         private const string VideoDirectory = @"F:\Screenshot\videostore";
 
+        // (新!) 引入服务
+        private readonly RecordingService _recordingService;
+
         private LibVLC? _libVLC;
         private MediaPlayer? _mediaPlayer;
         private bool _isSliderDragging = false; // 防止拖动滑块时与播放器更新冲突
         private bool _isSeeking = false; // (新!) 防止跳转时进度条被更新
+        private float _targetSeekPosition = 0f; // (新!) 记录目标跳转位置
 
         // (新!) 添加一个定时器用于快退
         private System.Windows.Threading.DispatcherTimer? _rewindTimer;
@@ -30,6 +34,9 @@ namespace PlaybackApp
         public MainWindow()
         {
             InitializeComponent();
+
+            // (新!) 初始化服务
+            _recordingService = new RecordingService(VideoDirectory);
 
             // 为方便测试，设置默认时间
             DtpStartTime.Value = DateTime.Now.AddMinutes(-15);
@@ -94,11 +101,11 @@ namespace PlaybackApp
         }
 
         /// <summary>
-        /// "查询并播放" 按钮的点击事件
+        /// "查询并播放" 按钮的点击事件 (已重构)
         /// </summary>
         private async void BtnPlay_Click(object sender, RoutedEventArgs e)
         {
-            // 1. 获取并验证 UI 输入 (这部分不变)
+            // 1. 获取并验证 UI 输入
             DateTime startTime = DtpStartTime.Value ?? DateTime.MinValue;
             DateTime endTime = DtpEndTime.Value ?? DateTime.MinValue;
 
@@ -113,26 +120,31 @@ namespace PlaybackApp
 
             try
             {
-                // 2. 核心逻辑：生成剪辑 (这部分不变, FFMpegCore 负责)
-                string? clipPath = await GeneratePlaybackClipAsync(startTime, endTime);
+                // 2. (新!) 创建一个 Progress 对象，它会自动在UI线程上更新 StatusText
+                var progress = new Progress<string>(message =>
+                {
+                    StatusText.Text = message;
+                });
+
+                // 3. (新!) 将繁重的工作委托给服务
+                //    我们传入 progress 对象，以便服务可以报告状态
+                string? clipPath = await _recordingService.GeneratePlaybackClipAsync(startTime, endTime, progress);
 
                 if (clipPath == null)
                 {
-                    StatusText.Text = "错误：未找到该时间段的视频文件。";
+                    // StatusText 已经被服务更新过了 (例如: "错误：未找到...")
                     return;
                 }
 
-                // 3. (关键改动) 播放剪辑好的文件 (使用 LibVLC)
+                // 4. (不变) 播放剪辑好的文件 (这是 MainWindow 的职责)
                 StatusText.Text = "正在播放...";
 
-                // 创建一个 Media 对象
                 if (_libVLC != null && _mediaPlayer != null)
                 {
-                    using (var media = new Media(_libVLC, new Uri(clipPath)))
-                    {
-                        // 开始播放
-                        _mediaPlayer.Play(media);
-                    }
+                    // (修复!) 不要使用 using，让 Media 对象在播放期间保持存活
+                    var media = new Media(_libVLC, new Uri(clipPath));
+                    // 开始播放
+                    _mediaPlayer.Play(media);
                 }
                 else
                 {
@@ -151,7 +163,7 @@ namespace PlaybackApp
 
 
         /// <summary>
-        /// "播放实时" 按钮的点击事件
+        /// "播放实时" 按钮的点击事件 (已重构)
         /// </summary>
         private void BtnPlayLive_Click(object sender, RoutedEventArgs e)
         {
@@ -161,19 +173,8 @@ namespace PlaybackApp
 
             try
             {
-                // 1. 检查录像目录是否存在
-                if (!Directory.Exists(VideoDirectory))
-                {
-                    StatusText.Text = "错误：录像目录未找到。";
-                    return;
-                }
-
-                // 2. 查找"最新"的录像文件
-                //    我们使用 FileInfo 来获取准确的 "LastWriteTime"
-                var directory = new DirectoryInfo(VideoDirectory);
-                var latestFile = directory.GetFiles("CAM_USB-*.mp4") // 匹配 Program.cs 中的文件名前缀
-                                          .OrderByDescending(f => f.LastWriteTime)
-                                          .FirstOrDefault(); // 获取最新的那一个
+                // 1. (新!) 从服务中获取文件
+                string? latestFile = _recordingService.FindLatestLiveFile();
 
                 if (latestFile == null)
                 {
@@ -181,20 +182,20 @@ namespace PlaybackApp
                     return;
                 }
 
-                // 3. 检查播放器是否已初始化
+                // 2. 检查播放器是否已初始化
                 if (_libVLC == null || _mediaPlayer == null)
                 {
                     StatusText.Text = "错误：播放器未初始化";
                     return;
                 }
 
-                // 4. (关键) 播放这个文件，并添加低延迟选项
-                StatusText.Text = $"正在播放实时画面 (来自: {latestFile.Name})...";
+                // 3. (不变) 播放文件 (这是 MainWindow 的职责)
+                StatusText.Text = $"正在播放实时画面 (来自: {Path.GetFileName(latestFile)})...";
 
                 // 创建 Media 对象并添加低延迟选项
                 // ":live-caching=300" 告诉 VLC 仅缓冲 300 毫秒的数据
                 // 这强制它播放"实时边缘"，而不是从文件开头播放
-                var media = new Media(_libVLC, latestFile.FullName);
+                var media = new Media(_libVLC, latestFile);
                 media.AddOption(":live-caching=300");
 
                 _mediaPlayer.Play(media);
@@ -210,212 +211,6 @@ namespace PlaybackApp
             }
         }
 
-
-        // --- (好消息!) ---
-        // --- 以下所有 FFMpegCore 的剪辑逻辑完全不变 ---
-        // --- 它们与播放器无关 ---
-
-        /// <summary>
-        /// 核心函数：根据时间范围生成一个可播放的剪辑文件
-        /// </summary>
-        /// <returns>临时剪辑文件的路径，如果失败则返回 null</returns>
-        private async Task<string?> GeneratePlaybackClipAsync(DateTime startTime, DateTime endTime)
-        {
-            // 1. 找到 "开始时间" 和 "结束时间" 对应的文件
-            string? sourceFile = FindFileForTime(startTime);
-            string? endFile = FindFileForTime(endTime);
-
-            if (sourceFile == null || endFile == null)
-            {
-                StatusText.Text = "错误：未能在目录中找到对应的视频文件。";
-                return null; // 未找到文件
-            }
-
-            // --- 案例 A: 简单情况 (开始和结束在同一个文件) ---
-            if (sourceFile == endFile)
-            {
-                DateTime fileStartTime = ParseTimeFromFileName(sourceFile);
-                TimeSpan clipStartTime = startTime - fileStartTime; // 这是 -ss 参数
-                TimeSpan clipDuration = endTime - startTime;        // 这是 -t 参数
-
-                string tempClipPath = Path.Combine(Path.GetTempPath(), $"playback_{Guid.NewGuid()}.mp4");
-
-                await FFMpegArguments
-                    .FromFileInput(sourceFile)
-                    .OutputToFile(tempClipPath, true, options => options
-                        .Seek(clipStartTime)
-                        .WithDuration(clipDuration)
-                        .WithVideoCodec("copy") // 使用 "copy" 模式，极快
-                    )
-                    .ProcessAsynchronously();
-
-                if (File.Exists(tempClipPath))
-                {
-                    return tempClipPath;
-                }
-            }
-
-            // --- 案例 B: 高级情况 (跨越多个文件) ---
-            else
-            {
-                // 1. 创建一个临时的"工作目录"来存放所有剪辑片段
-                string workDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
-                Directory.CreateDirectory(workDir);
-
-                try
-                {
-                    // 2. 获取所有文件，并按名称排序 (确保时间顺序)
-                    var allFiles = Directory.GetFiles(VideoDirectory, "CAM_USB-*.mp4")
-                                            .OrderBy(f => f)
-                                            .ToList();
-
-                    int startIndex = allFiles.IndexOf(sourceFile);
-                    int endIndex = allFiles.IndexOf(endFile);
-
-                    if (startIndex == -1 || endIndex == -1)
-                    {
-                        StatusText.Text = "错误：无法在文件列表中定位索引。";
-                        return null;
-                    }
-
-                    var filesToProcess = allFiles.GetRange(startIndex, (endIndex - startIndex) + 1);
-                    var clipFileNames = new List<string>(); // 用于 mylist.txt
-
-                    // 3. 循环处理所有涉及的文件 (第一个、中间的、最后一个)
-                    for (int i = 0; i < filesToProcess.Count; i++)
-                    {
-                        string currentFile = filesToProcess[i];
-                        string clipName = $"{i}.mp4"; // 临时片段名 0.mp4, 1.mp4 ...
-                        string clipOutputPath = Path.Combine(workDir, clipName);
-
-                        var clipArgs = FFMpegArguments.FromFileInput(currentFile);
-
-                        if (i == 0) // 第一个文件: 从 startTime 剪到末尾
-                        {
-                            DateTime fileStartTime = ParseTimeFromFileName(currentFile);
-                            TimeSpan clipStartTime = startTime - fileStartTime;
-
-                            await clipArgs.OutputToFile(clipOutputPath, true, options => options
-                                    .Seek(clipStartTime)
-                                    .WithVideoCodec("copy")
-                                ).ProcessAsynchronously();
-                        }
-                        else if (i == filesToProcess.Count - 1) // 最后一个文件: 从开头剪到 endTime
-                        {
-                            DateTime fileStartTime = ParseTimeFromFileName(currentFile);
-                            TimeSpan clipDuration = endTime - fileStartTime;
-
-                            await clipArgs.OutputToFile(clipOutputPath, true, options => options
-                                    .WithDuration(clipDuration)
-                                    .WithVideoCodec("copy")
-                                ).ProcessAsynchronously();
-                        }
-                        else // 中间文件: 复制整个文件
-                        {
-                            await clipArgs.OutputToFile(clipOutputPath, true, options => options
-                                    .WithVideoCodec("copy")
-                                ).ProcessAsynchronously();
-                        }
-
-                        clipFileNames.Add(clipName); // 将 "0.mp4" 等添加到列表
-                    }
-
-                    // 4. 创建 FFmpeg concat 必需的 "mylist.txt"
-                    string listPath = Path.Combine(workDir, "mylist.txt");
-                    var fileContent = string.Join('\n', clipFileNames.Select(f => $"file '{f}'"));
-                    await File.WriteAllTextAsync(listPath, fileContent);
-
-                    // 5. 执行合并 (concat) 命令
-                    string finalClipPath = Path.Combine(Path.GetTempPath(), $"playback_merged_{Guid.NewGuid()}.mp4");
-
-                    // FFMpegCore 需要这样来调用 concat demuxer:
-                    // 注意：我们需要使用绝对路径或者在工作目录中执行
-                    var previousDir = Directory.GetCurrentDirectory();
-                    try
-                    {
-                        Directory.SetCurrentDirectory(workDir);
-
-                        await FFMpegArguments
-                            // -f concat -safe 0 -i mylist.txt
-                            .FromFileInput("mylist.txt", false, options => options
-                                .WithCustomArgument("-f concat")
-                                .WithCustomArgument("-safe 0") // 允许使用相对路径
-                            )
-                            // -c copy output.mp4
-                            .OutputToFile(finalClipPath, false, options => options
-                                .WithVideoCodec("copy")
-                            )
-                            .ProcessAsynchronously();
-                    }
-                    finally
-                    {
-                        Directory.SetCurrentDirectory(previousDir);
-                    }
-
-                    if (File.Exists(finalClipPath))
-                    {
-                        return finalClipPath;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    StatusText.Text = $"多文件合并失败: {ex.Message}";
-                    return null;
-                }
-                finally
-                {
-                    // 6. (重要) 清理我们的临时工作目录
-                    if (Directory.Exists(workDir))
-                    {
-                        Directory.Delete(workDir, true);
-                    }
-                }
-            }
-
-            return null; // 所有逻辑都失败了
-        }
-
-        /// <summary>
-        /// 辅助函数：根据文件名解析出文件的开始时间
-        /// </summary>
-        private DateTime ParseTimeFromFileName(string filePath)
-        {
-            string fileName = Path.GetFileNameWithoutExtension(filePath);
-            string[] parts = fileName.Split('-');
-            string dateTimeString = $"{parts[1]}{parts[2]}";
-
-            return DateTime.ParseExact(dateTimeString, "yyyyMMddHHmmss", CultureInfo.InvariantCulture);
-        }
-
-        /// <summary>
-        /// 辅助函数：查找指定时间点所在的录像文件
-        /// </summary>
-        private string? FindFileForTime(DateTime requestedTime)
-        {
-            if (!Directory.Exists(VideoDirectory)) return null;
-
-            var files = Directory.GetFiles(VideoDirectory, "CAM_USB-*.mp4");
-
-            foreach (var file in files)
-            {
-                try
-                {
-                    DateTime fileStartTime = ParseTimeFromFileName(file);
-                    DateTime fileEndTime = fileStartTime.AddMinutes(10); // 匹配 600 秒分段
-
-                    if (requestedTime >= fileStartTime && requestedTime < fileEndTime)
-                    {
-                        return file; // 找到了!
-                    }
-                }
-                catch
-                {
-                    // 忽略无法解析的文件名
-                }
-            }
-
-            return null; // 没找到
-        }
 
         // ============================================================
         // 进度条 和 播放器 事件处理
@@ -438,23 +233,14 @@ namespace PlaybackApp
 
             if (_mediaPlayer != null && _mediaPlayer.IsSeekable)
             {
-                // (新!) 标记正在跳转,防止 TimeChanged 事件更新进度条
+                // 1. 标记我们正在等待跳转
                 _isSeeking = true;
 
-                // (关键改动!) 使用 Position (百分比 0.0-1.0) 而不是 Time (毫秒)
-                // VLC 会自动寻找最近的关键帧，避免花屏问题
-                _mediaPlayer.Position = (float)PlaybackSlider.Value;
+                // 2. 记录目标位置
+                _targetSeekPosition = (float)PlaybackSlider.Value;
 
-                // (新!) 使用定时器在短暂延迟后解除 Seeking 标志
-                // 这给 VLC 足够时间完成跳转
-                var seekTimer = new System.Windows.Threading.DispatcherTimer();
-                seekTimer.Interval = TimeSpan.FromMilliseconds(300); // 300ms 延迟
-                seekTimer.Tick += (s, args) =>
-                {
-                    _isSeeking = false;
-                    seekTimer.Stop();
-                };
-                seekTimer.Start();
+                // 3. 执行跳转
+                _mediaPlayer.Position = _targetSeekPosition;
             }
         }
 
@@ -478,26 +264,44 @@ namespace PlaybackApp
         /// </summary>
         private void MediaPlayer_TimeChanged(object? sender, MediaPlayerTimeChangedEventArgs e)
         {
-            // 只有当用户 *没有* 正在拖动滑块 *且* 没有正在跳转时，才更新滑块的位置
-            if (!_isSliderDragging && !_isSeeking)
+            // 如果用户正在拖动滑块，立即停止，不更新任何内容
+            if (_isSliderDragging)
             {
-                // 在 UI 线程上更新
-                Dispatcher.Invoke(() =>
-                {
-                    // (改动!) 更新滑块位置使用 Position (0.0-1.0) 而不是 Time (毫秒)
-                    // 这样可以避免精确跳转导致的花屏问题
-                    if (_mediaPlayer != null)
-                    {
-                        PlaybackSlider.Value = _mediaPlayer.Position;
-                    }
-
-                    // (保持不变) 时间文本仍然使用 Time 和 Length 来显示精确时间
-                    if (_mediaPlayer != null)
-                    {
-                        TimeText.Text = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
-                    }
-                });
+                return;
             }
+
+            // (新!) 如果我们正在等待跳转...
+            if (_isSeeking)
+            {
+                // 检查播放器报告的当前位置是否已经 "接近" 我们的目标位置
+                // (使用 0.02 (2%) 作为误差范围)
+                if (_mediaPlayer != null && Math.Abs(_mediaPlayer.Position - _targetSeekPosition) < 0.02)
+                {
+                    // 看起来跳转已经完成！解除标志
+                    _isSeeking = false;
+                }
+                else
+                {
+                    // 跳转尚未完成 (播放器仍在报告旧时间)，
+                    // 立即停止，不要更新滑块的 UI
+                    return;
+                }
+            }
+
+            // (不变) 只有当不在拖动且不在等待跳转时，才更新 UI
+            // (_isSeeking 标志在上面刚刚被我们解除)
+            Dispatcher.Invoke(() =>
+            {
+                if (_mediaPlayer != null)
+                {
+                    PlaybackSlider.Value = _mediaPlayer.Position;
+                }
+
+                if (_mediaPlayer != null)
+                {
+                    TimeText.Text = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
+                }
+            });
         }
 
         /// <summary>
