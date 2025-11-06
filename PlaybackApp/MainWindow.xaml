@@ -176,9 +176,9 @@
                                                 Click="BtnPlay_Click"/>
 
                                         <Button x:Name="BtnPlayLive"
-                                                Content="🔴 播放实时流 (30s延迟)"
+                                                Content="🔴 伪播放实时流 (30s延迟)"
                                                 Style="{StaticResource LiveButton}"
-                                                Width="160"
+                                                Width="200"
                                                 Click="BtnPlayLive_Click"/>
                                 </StackPanel>
                         </Border>
