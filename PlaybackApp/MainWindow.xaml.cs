@@ -25,6 +25,11 @@ namespace PlaybackApp
         private bool _isSliderDragging = false; // 防止拖动滑块时与播放器更新冲突
         private bool _isSeeking = false; // (新!) 防止跳转时进度条被更新
         private float _targetSeekPosition = 0f; // (新!) 记录目标跳转位置
+        private bool _isFastForwarding = false; // (新!) 标志：是否正在快进
+
+        // (新!) 添加节流变量：记录上次更新进度条的时间
+        private DateTime _lastProgressUpdate = DateTime.MinValue;
+        private const int ProgressUpdateIntervalMs = 100; // 进度条更新间隔（毫秒）
 
         // (新!) 添加一个定时器用于快退
         private System.Windows.Threading.DispatcherTimer? _rewindTimer;
@@ -224,6 +229,11 @@ namespace PlaybackApp
                 {
                     // (修复!) 不要使用 using，让 Media 对象在播放期间保持存活
                     var media = new Media(_libVLC, new Uri(clipPath));
+
+                    // (新!) 禁用循环播放
+                    media.AddOption(":no-loop");
+                    media.AddOption(":no-repeat");
+
                     // 开始播放
                     _mediaPlayer.Play(media);
                 }
@@ -497,6 +507,16 @@ namespace PlaybackApp
 
             // (不变) 只有当不在拖动且不在等待跳转时，才更新 UI
             // (_isSeeking 标志在上面刚刚被我们解除)
+
+            // (新!) 节流机制：限制更新频率，避免快进时进度条更新过快
+            var now = DateTime.Now;
+            if ((now - _lastProgressUpdate).TotalMilliseconds < ProgressUpdateIntervalMs)
+            {
+                // 距离上次更新时间太短，跳过本次更新
+                return;
+            }
+            _lastProgressUpdate = now;
+
             Dispatcher.Invoke(() =>
             {
                 if (_mediaPlayer != null)
@@ -516,7 +536,17 @@ namespace PlaybackApp
                     else
                     {
                         // 普通模式：显示视频播放时间
-                        TimeText.Text = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
+                        string timeInfo = $"{FormatTime(e.Time)} / {FormatTime(_mediaPlayer.Length)}";
+
+                        // (新!) 如果正在快进，显示倍速提示
+                        if (_isFastForwarding)
+                        {
+                            TimeText.Text = $"⏩ {timeInfo} (3x)";
+                        }
+                        else
+                        {
+                            TimeText.Text = timeInfo;
+                        }
                     }
                 }
             });
@@ -557,9 +587,11 @@ namespace PlaybackApp
                 // 功能2: 按住右键 3倍快进
                 case System.Windows.Input.Key.Right:
                     // 仅当 1) 正在播放 2) 可变速 3) 且 *不是* 重复按键时才设置
-                    if (_mediaPlayer.IsPlaying && _mediaPlayer.IsSeekable && !e.IsRepeat)
+                    if (_mediaPlayer.IsPlaying && _mediaPlayer.IsSeekable && !e.IsRepeat && !_isFastForwarding)
                     {
+                        _isFastForwarding = true;
                         _mediaPlayer.SetRate(3.0f);
+                        StatusText.Text = "⏩ 快进中 (3倍速)...";
                     }
                     e.Handled = true;
                     break;
@@ -590,7 +622,21 @@ namespace PlaybackApp
             // 当"快进"的右键被松开时，恢复 1.0x 正常速度
             if (e.Key == System.Windows.Input.Key.Right)
             {
-                _mediaPlayer.SetRate(1.0f);
+                if (_isFastForwarding)
+                {
+                    _mediaPlayer.SetRate(1.0f);
+                    _isFastForwarding = false;
+
+                    // 恢复状态文本
+                    if (_currentLiveFilePath != null)
+                    {
+                        StatusText.Text = "正在播放实时画面...";
+                    }
+                    else
+                    {
+                        StatusText.Text = "正在播放...";
+                    }
+                }
                 e.Handled = true;
             }
 
@@ -599,6 +645,17 @@ namespace PlaybackApp
             {
                 _rewindTimer?.Stop();
                 _isRewinding = false;
+
+                // (修复!) 恢复状态文本
+                if (_currentLiveFilePath != null)
+                {
+                    StatusText.Text = "正在播放实时画面...";
+                }
+                else
+                {
+                    StatusText.Text = "正在播放...";
+                }
+
                 e.Handled = true;
             }
         }

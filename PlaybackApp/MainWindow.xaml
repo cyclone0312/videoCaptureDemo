@@ -7,83 +7,253 @@
         xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
         xmlns:xctk="http://schemas.xceed.com/wpf/xaml/toolkit"
         mc:Ignorable="d"
-        Title="视频回放 Demo (使用 LibVLC)"
-        Height="600"
-        Width="800"
+        Title="视频回放系统 - LibVLC 播放器"
+        Height="720"
+        Width="1000"
+        MinHeight="600"
+        MinWidth="800"
+        WindowStartupLocation="CenterScreen"
         Loaded="Window_Loaded"
         Unloaded="Window_Unloaded"
         KeyDown="Window_KeyDown"
         KeyUp="Window_KeyUp">
 
-        <Grid Margin="10">
-                <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                </Grid.RowDefinitions>
+        <Window.Resources>
+                <!-- 按钮样式 -->
+                <Style x:Key="ModernButton"
+                       TargetType="Button">
+                        <Setter Property="Background"
+                                Value="#FF0078D7"/>
+                        <Setter Property="Foreground"
+                                Value="White"/>
+                        <Setter Property="BorderThickness"
+                                Value="0"/>
+                        <Setter Property="Padding"
+                                Value="15,8"/>
+                        <Setter Property="FontSize"
+                                Value="14"/>
+                        <Setter Property="FontWeight"
+                                Value="SemiBold"/>
+                        <Setter Property="Cursor"
+                                Value="Hand"/>
+                        <Setter Property="Template">
+                                <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                                <Border Background="{TemplateBinding Background}"
+                                                        CornerRadius="5"
+                                                        BorderThickness="0">
+                                                        <Border.Effect>
+                                                                <DropShadowEffect Color="#40000000"
+                                                                                  BlurRadius="8"
+                                                                                  ShadowDepth="2"
+                                                                                  Opacity="0.3"/>
+                                                        </Border.Effect>
+                                                        <ContentPresenter HorizontalAlignment="Center"
+                                                                          VerticalAlignment="Center"/>
+                                                </Border>
+                                        </ControlTemplate>
+                                </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FF005A9E"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FF004275"/>
+                                </Trigger>
+                                <Trigger Property="IsEnabled"
+                                         Value="False">
+                                        <Setter Property="Background"
+                                                Value="#FFCCCCCC"/>
+                                        <Setter Property="Foreground"
+                                                Value="#FF666666"/>
+                                </Trigger>
+                        </Style.Triggers>
+                </Style>
 
-                <StackPanel Grid.Row="0"
-                            Orientation="Horizontal"
-                            Margin="5">
-                        <TextBlock Text="开始时间:"
-                                   VerticalAlignment="Center"
-                                   Margin="5,0"/>
-                        <xctk:DateTimePicker x:Name="DtpStartTime"
-                                             Width="180"/>
+                <!-- 实时播放按钮样式 (橙色) -->
+                <Style x:Key="LiveButton"
+                       TargetType="Button"
+                       BasedOn="{StaticResource ModernButton}">
+                        <Setter Property="Background"
+                                Value="#FFFF6B35"/>
+                        <Style.Triggers>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FFE55A2B"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FFCC4A21"/>
+                                </Trigger>
+                        </Style.Triggers>
+                </Style>
 
-                        <TextBlock Text="结束时间:"
-                                   VerticalAlignment="Center"
-                                   Margin="10,0,5,0"/>
-                        <xctk:DateTimePicker x:Name="DtpEndTime"
-                                             Width="180"/>
+                <!-- TextBlock 样式 -->
+                <Style x:Key="LabelText"
+                       TargetType="TextBlock">
+                        <Setter Property="FontSize"
+                                Value="14"/>
+                        <Setter Property="FontWeight"
+                                Value="Medium"/>
+                        <Setter Property="Foreground"
+                                Value="#FF333333"/>
+                        <Setter Property="VerticalAlignment"
+                                Value="Center"/>
+                </Style>
 
-                        <Button x:Name="BtnPlay"
-                                Content="查询并播放"
-                                Width="80"
-                                Margin="10,0"
-                                Click="BtnPlay_Click"/>
+                <!-- DateTimePicker 样式 -->
+                <Style TargetType="xctk:DateTimePicker">
+                        <Setter Property="FontSize"
+                                Value="13"/>
+                        <Setter Property="Height"
+                                Value="32"/>
+                </Style>
+        </Window.Resources>
 
-                        <Button x:Name="BtnPlayLive"
-                                Content="播放实时(30s延时)"
-                                Width="110"
-                                Margin="5,0,0,0"
-                                Click="BtnPlayLive_Click"/>
-                </StackPanel>
+        <Grid>
+                <!-- 背景渐变 -->
+                <Grid.Background>
+                        <LinearGradientBrush StartPoint="0,0"
+                                             EndPoint="0,1">
+                                <GradientStop Color="#FFF5F7FA"
+                                              Offset="0"/>
+                                <GradientStop Color="#FFE8EDF2"
+                                              Offset="1"/>
+                        </LinearGradientBrush>
+                </Grid.Background>
 
-                <Border Grid.Row="1"
-                        BorderBrush="Black"
-                        BorderThickness="1">
-                        <vlc:VideoView x:Name="VideoView"/>
-                </Border>
+                <Grid Margin="20">
+                        <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="15"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="15"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="10"/>
+                                <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
 
-                <Grid Grid.Row="2"
-                      Margin="5">
-                        <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
+                        <!-- 控制面板 -->
+                        <Border Grid.Row="0"
+                                Background="White"
+                                CornerRadius="10"
+                                Padding="20,15">
+                                <Border.Effect>
+                                        <DropShadowEffect Color="#20000000"
+                                                          BlurRadius="10"
+                                                          ShadowDepth="2"
+                                                          Opacity="0.2"/>
+                                </Border.Effect>
 
-                        <Slider x:Name="PlaybackSlider"
-                                Grid.Column="0"
-                                VerticalAlignment="Center"
-                                Margin="5,0"
-                                IsEnabled="False"
-                                PreviewMouseDown="PlaybackSlider_PreviewMouseDown"
-                                PreviewMouseUp="PlaybackSlider_PreviewMouseUp"/>
+                                <StackPanel Orientation="Horizontal">
+                                        <StackPanel.Resources>
+                                                <Style TargetType="TextBlock"
+                                                       BasedOn="{StaticResource LabelText}"/>
+                                        </StackPanel.Resources>
 
-                        <TextBlock x:Name="TimeText"
-                                   Grid.Column="1"
-                                   VerticalAlignment="Center"
-                                   Text="00:00 / 00:00"
-                                   Margin="5,0"/>
-                </Grid>
+                                        <TextBlock Text="📅 开始时间:"
+                                                   Margin="0,0,10,0"/>
+                                        <xctk:DateTimePicker x:Name="DtpStartTime"
+                                                             Width="200"/>
 
-                <StatusBar Grid.Row="3">
-                        <StatusBarItem>
+                                        <TextBlock Text="📅 结束时间:"
+                                                   Margin="30,0,10,0"/>
+                                        <xctk:DateTimePicker x:Name="DtpEndTime"
+                                                             Width="200"/>
+
+                                        <Button x:Name="BtnPlay"
+                                                Content="▶ 查询并播放"
+                                                Style="{StaticResource ModernButton}"
+                                                Width="120"
+                                                Margin="30,0,15,0"
+                                                Click="BtnPlay_Click"/>
+
+                                        <Button x:Name="BtnPlayLive"
+                                                Content="🔴 播放实时流 (30s延迟)"
+                                                Style="{StaticResource LiveButton}"
+                                                Width="160"
+                                                Click="BtnPlayLive_Click"/>
+                                </StackPanel>
+                        </Border>
+
+                        <!-- 视频播放区域 -->
+                        <Border Grid.Row="2"
+                                Background="Black"
+                                CornerRadius="10"
+                                ClipToBounds="True">
+                                <Border.Effect>
+                                        <DropShadowEffect Color="#30000000"
+                                                          BlurRadius="15"
+                                                          ShadowDepth="3"
+                                                          Opacity="0.3"/>
+                                </Border.Effect>
+                                <vlc:VideoView x:Name="VideoView"
+                                               HorizontalAlignment="Stretch"
+                                               VerticalAlignment="Stretch"/>
+                        </Border>
+
+                        <!-- 进度控制区域 -->
+                        <Border Grid.Row="4"
+                                Background="White"
+                                CornerRadius="10"
+                                Padding="20,15">
+                                <Border.Effect>
+                                        <DropShadowEffect Color="#20000000"
+                                                          BlurRadius="10"
+                                                          ShadowDepth="2"
+                                                          Opacity="0.2"/>
+                                </Border.Effect>
+
+                                <Grid>
+                                        <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="15"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <Slider x:Name="PlaybackSlider"
+                                                Grid.Column="0"
+                                                VerticalAlignment="Center"
+                                                IsEnabled="False"
+                                                PreviewMouseDown="PlaybackSlider_PreviewMouseDown"
+                                                PreviewMouseUp="PlaybackSlider_PreviewMouseUp"
+                                                Foreground="#FF0078D7"
+                                                Height="20"/>
+
+                                        <TextBlock x:Name="TimeText"
+                                                   Grid.Column="2"
+                                                   Text="00:00 / 00:00"
+                                                   FontSize="14"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#FF333333"
+                                                   VerticalAlignment="Center"/>
+                                </Grid>
+                        </Border>
+
+                        <!-- 状态栏 -->
+                        <Border Grid.Row="6"
+                                Background="#FF2C3E50"
+                                CornerRadius="8"
+                                Padding="15,10">
+                                <Border.Effect>
+                                        <DropShadowEffect Color="#20000000"
+                                                          BlurRadius="8"
+                                                          ShadowDepth="2"
+                                                          Opacity="0.2"/>
+                                </Border.Effect>
                                 <TextBlock x:Name="StatusText"
-                                           Text="请选择时间并点击播放"/>
-                        </StatusBarItem>
-                </StatusBar>
+                                           Text="💡 请选择时间范围后点击播放，或直接播放实时流"
+                                           Foreground="White"
+                                           FontSize="13"
+                                           FontWeight="Medium"/>
+                        </Border>
+                </Grid>
         </Grid>
 </Window>
