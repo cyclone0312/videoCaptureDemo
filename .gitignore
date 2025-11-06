@@ -2,6 +2,21 @@
 bin/
 obj/
 
+# Executables
+*.exe
+*.dll
+*.pdb
+
+# Build results
+*.user
+*.suo
+*.cache
+*.log
+
+# NuGet
+packages/
+*.nupkg
+
 # IDE
 .vscode/
 .idea/
@@ -9,16 +24,3 @@ obj/
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
-# NuGet
-*.nupkg
-packages/
-
-# Rider
-*.sln.iml
-
-# User-specific files
-*.user
