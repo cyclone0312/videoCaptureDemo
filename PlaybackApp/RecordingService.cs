@@ -24,8 +24,10 @@ namespace PlaybackApp
         }
 
         /// <summary>
-        /// 查找最新的实时文件。
-        /// (改进!) 使用文件名中的时间戳排序，而不是 LastWriteTime
+        /// 查找最新的**已完成录制**的实时文件。
+        /// (!!! 关键修改 !!!) 
+        /// 使用 faststart 格式的 MP4 文件在录制完成前无法播放，
+        /// 因此需要跳过正在录制的文件（通常是最新的那个）。
         /// </summary>
         public string? FindLatestLiveFile()
         {
@@ -36,26 +38,85 @@ namespace PlaybackApp
 
             var directory = new DirectoryInfo(_videoDirectory);
             var files = directory.GetFiles("CAM_USB-*.mp4")
-                                 .OrderByDescending(f => f.Name) // (关键!) 按文件名排序，文件名包含时间戳
+                                 .OrderByDescending(f => f.Name) // 按文件名排序，文件名包含时间戳
                                  .ToList();
 
             // (调试) 打印所有文件
-            Console.WriteLine("=== 查找最新文件 (按文件名排序) ===");
-            foreach (var file in files.Take(3)) // 只显示前3个
+            Console.WriteLine("=== 查找最新可播放文件 (跳过正在录制的文件) ===");
+            foreach (var file in files.Take(5)) // 显示前5个
             {
                 Console.WriteLine($"  {file.Name}");
                 Console.WriteLine($"    创建时间: {file.CreationTime}");
                 Console.WriteLine($"    修改时间: {file.LastWriteTime}");
                 Console.WriteLine($"    文件大小: {file.Length / 1024 / 1024} MB");
+                Console.WriteLine($"    是否正在写入: {IsFileLocked(file.FullName)}");
             }
 
-            var latestFile = files.FirstOrDefault();
-            if (latestFile != null)
+            // (!!! 关键逻辑 !!!)
+            // 策略 1: 跳过文件列表中的第一个文件（最新的），因为它很可能正在录制
+            // 策略 2: 使用文件锁检测，确保文件已完成写入
+            FileInfo? latestPlayableFile = null;
+
+            foreach (var file in files)
             {
-                Console.WriteLine($"✓ 选中: {latestFile.Name}");
+                // 策略 1: 跳过最新的文件（索引 0）
+                if (files.IndexOf(file) == 0)
+                {
+                    Console.WriteLine($"  ⏭ 跳过最新文件（可能正在录制）: {file.Name}");
+                    continue;
+                }
+
+                // 策略 2: 检查文件是否被锁定（正在写入）
+                if (IsFileLocked(file.FullName))
+                {
+                    Console.WriteLine($"  🔒 文件被锁定（正在写入）: {file.Name}");
+                    continue;
+                }
+
+                // 找到第一个未被锁定的文件
+                latestPlayableFile = file;
+                Console.WriteLine($"  ✓ 选中可播放文件: {file.Name}");
+                break;
             }
 
-            return latestFile?.FullName;
+            if (latestPlayableFile == null)
+            {
+                Console.WriteLine("  ⚠ 未找到可播放的文件（所有文件都在录制中或被锁定）");
+                // 如果所有文件都被锁定，返回倒数第二个文件作为备选
+                if (files.Count >= 2)
+                {
+                    latestPlayableFile = files[1];
+                    Console.WriteLine($"  → 备选方案：返回倒数第二个文件: {latestPlayableFile.Name}");
+                }
+            }
+
+            return latestPlayableFile?.FullName;
+        }
+
+        /// <summary>
+        /// (!!! 新增 !!!) 辅助函数：检查文件是否被锁定（正在写入）
+        /// </summary>
+        private bool IsFileLocked(string filePath)
+        {
+            try
+            {
+                // 尝试以独占模式打开文件
+                using (FileStream stream = File.Open(filePath, FileMode.Open, FileAccess.Read, FileShare.None))
+                {
+                    // 如果能打开，说明文件没有被锁定
+                    return false;
+                }
+            }
+            catch (IOException)
+            {
+                // 如果抛出 IOException，说明文件被其他进程占用（正在写入）
+                return true;
+            }
+            catch (Exception)
+            {
+                // 其他异常（权限问题等），为安全起见，视为锁定
+                return true;
+            }
         }
 
         /// <summary>
@@ -230,32 +291,77 @@ namespace PlaybackApp
 
         /// <summary>
         /// 辅助函数：查找指定时间点所在的录像文件
+        /// (!!! 关键修改 !!!)
+        /// 不再假定每个文件都是完整的 10 分钟，而是读取文件的实际时长。
+        /// 这样可以正确处理：
+        /// 1. 正在录制的文件（不足 10 分钟）
+        /// 2. 录制中途停止的文件
+        /// 3. 最后一个分段（可能不足 10 分钟）
         /// </summary>
         public string? FindFileForTime(DateTime requestedTime)
         {
             if (!Directory.Exists(_videoDirectory)) return null;
 
-            var files = Directory.GetFiles(_videoDirectory, "CAM_USB-*.mp4");
+            var files = Directory.GetFiles(_videoDirectory, "CAM_USB-*.mp4")
+                                 .OrderBy(f => f) // 按文件名排序（时间顺序）
+                                 .ToList();
 
             foreach (var file in files)
             {
                 try
                 {
                     DateTime fileStartTime = ParseTimeFromFileName(file);
-                    DateTime fileEndTime = fileStartTime.AddMinutes(10); // 匹配 600 秒分段
+
+                    // (!!! 关键修复 !!!) 读取文件的实际时长
+                    TimeSpan actualDuration = GetVideoDuration(file);
+
+                    // 如果无法读取时长（文件损坏或正在写入），跳过
+                    if (actualDuration == TimeSpan.Zero)
+                    {
+                        Console.WriteLine($"⚠ 无法读取文件时长，跳过: {Path.GetFileName(file)}");
+                        continue;
+                    }
+
+                    DateTime fileEndTime = fileStartTime.Add(actualDuration);
+
+                    Console.WriteLine($"检查文件: {Path.GetFileName(file)}");
+                    Console.WriteLine($"  开始时间: {fileStartTime:HH:mm:ss}");
+                    Console.WriteLine($"  实际时长: {actualDuration.TotalMinutes:F2} 分钟");
+                    Console.WriteLine($"  结束时间: {fileEndTime:HH:mm:ss}");
+                    Console.WriteLine($"  查询时间: {requestedTime:HH:mm:ss}");
 
                     if (requestedTime >= fileStartTime && requestedTime < fileEndTime)
                     {
-                        return file; // 找到了!
+                        Console.WriteLine($"  ✓ 找到匹配文件！");
+                        return file;
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
+                    Console.WriteLine($"✗ 解析文件失败: {Path.GetFileName(file)}, 错误: {ex.Message}");
                     // 忽略无法解析的文件名
                 }
             }
 
-            return null; // 没找到
+            Console.WriteLine($"⚠ 未找到包含时间 {requestedTime:HH:mm:ss} 的文件");
+            return null;
+        }
+
+        /// <summary>
+        /// (!!! 新增 !!!) 辅助函数：获取视频文件的实际时长
+        /// </summary>
+        private TimeSpan GetVideoDuration(string filePath)
+        {
+            try
+            {
+                var mediaInfo = FFProbe.Analyse(filePath);
+                return mediaInfo.Duration;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"✗ 读取视频时长失败: {Path.GetFileName(filePath)}, 错误: {ex.Message}");
+                return TimeSpan.Zero;
+            }
         }
 
         /// <summary>

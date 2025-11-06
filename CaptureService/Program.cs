@@ -171,8 +171,12 @@ class Program
                 //
                 // tee muxer 格式：
                 // -map 0 -f tee "[options1]output1|[options2]output2"
-                // 目标1: segment格式的分片fMP4文件
+                // 目标1: segment格式的分片MP4文件（使用普通MP4，不用fMP4）
                 // 目标2: RTSP推流
+                //
+                // (!!! 关键修复 !!!)
+                // 从 movflags=frag_keyframe+empty_moov (fMP4 - 流式友好但不兼容tee)
+                // 改为 movflags=faststart (普通MP4 - tee兼容但需要完整写入后才能播放)
                 string ffmpegArgs = $"-re -f dshow -i video=\"{videoDeviceName}\":audio=\"{audioDeviceName}\" " +
                     $"-vf \"{drawtextFilter}\" " +
                     // 统一的、对 RTSP 和 fMP4 都友好的编码参数
@@ -183,8 +187,8 @@ class Program
                     // 指定 "tee" Muxer
                     $"-f tee " +
                     // 目标1 (录制) 和 目标2 (推流)
-                    // 注意：使用转义后的路径
-                    $"\"[f=segment:segment_time=600:strftime=1:segment_format_options=movflags=frag_keyframe+empty_moov]{escapedOutputTemplate}|[f=rtsp:rtsp_transport=tcp]{rtspStreamUrl}\"";
+                    // 注意：使用转义后的路径，使用 faststart 代替 frag_keyframe+empty_moov
+                    $"\"[f=segment:segment_time=600:strftime=1:segment_format_options=movflags=faststart]{escapedOutputTemplate}|[f=rtsp:rtsp_transport=tcp]{rtspStreamUrl}\"";
 
                 Console.WriteLine($"FFmpeg arguments: {ffmpegArgs}");
 
