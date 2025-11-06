@@ -45,6 +45,9 @@ namespace PlaybackApp
         // (新!) 添加一个定时器，用于定期检查是否有新的录像文件
         private System.Windows.Threading.DispatcherTimer? _liveMonitorTimer;
 
+        // (新!) 添加一个专用的标志来区分RTSP流
+        private bool _isRtspPlayback = false;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -64,26 +67,18 @@ namespace PlaybackApp
             Core.Initialize();
 
             _libVLC = new LibVLC();
-            _mediaPlayer = new MediaPlayer(_libVLC);
+            
+            // (关键修改!) 调用辅助函数来创建第一个播放器实例
+            InitializeMediaPlayer();
 
-            // 将 UI 控件 (VideoView) 和 播放器逻辑 (_mediaPlayer) 绑定
-            VideoView.MediaPlayer = _mediaPlayer;
-
-            // 订阅播放器事件
-            if (_mediaPlayer != null)
-            {
-                _mediaPlayer.LengthChanged += MediaPlayer_LengthChanged;
-                _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
-                _mediaPlayer.Playing += MediaPlayer_Playing; // (新!) 订阅播放开始事件
-                _mediaPlayer.EndReached += MediaPlayer_EndReached; // (新!) 订阅播放结束事件
-            }
-
-            // (新!) 初始化快退定时器
+            // 订阅播放器事件 (这部分逻辑已移至 InitializeMediaPlayer)
+            
+            // (保持不变) 初始化快退定时器
             _rewindTimer = new System.Windows.Threading.DispatcherTimer();
             _rewindTimer.Interval = TimeSpan.FromMilliseconds(250); // 每 250 毫秒跳转一次
             _rewindTimer.Tick += RewindTimer_Tick;
 
-            // (新!) 初始化实时监控定时器
+            // (保持不变) 初始化实时监控定时器
             _liveMonitorTimer = new System.Windows.Threading.DispatcherTimer();
             _liveMonitorTimer.Interval = TimeSpan.FromSeconds(5); // 每 5 秒检查一次
             _liveMonitorTimer.Tick += LiveMonitorTimer_Tick;
@@ -152,8 +147,14 @@ namespace PlaybackApp
                     // 播放新文件
                     if (_libVLC != null && _mediaPlayer != null)
                     {
-                        var media = new Media(_libVLC, latestFile);
+                        // (!!! 关键修复 !!!) 
+                        // 必须指定 UriKind.Absolute 才能正确加载本地文件
+                        var media = new Media(_libVLC, new Uri(latestFile, UriKind.Absolute));
                         media.AddOption(":live-caching=300");
+                        
+                        // (!!! 关键修复 !!!) 用 "重建" 替换 "停止"
+                        InitializeMediaPlayer();
+                        
                         _mediaPlayer.Play(media);
                     }
                 }
@@ -174,6 +175,52 @@ namespace PlaybackApp
         {
             _mediaPlayer?.Dispose();
             _libVLC?.Dispose();
+        }
+
+        // ============================================================
+        // (!!! 关键修复 !!!) 
+        // 添加一个新的辅助函数来彻底重建 MediaPlayer
+        // ============================================================
+        private void InitializeMediaPlayer()
+        {
+            // 1. (销毁) 如果旧的播放器存在，完全解除绑定并销毁它
+            if (_mediaPlayer != null)
+            {
+                // 解除所有事件绑定，防止内存泄漏
+                _mediaPlayer.LengthChanged -= MediaPlayer_LengthChanged;
+                _mediaPlayer.TimeChanged -= MediaPlayer_TimeChanged;
+                _mediaPlayer.Playing -= MediaPlayer_Playing;
+                _mediaPlayer.EndReached -= MediaPlayer_EndReached;
+                _mediaPlayer.EncounteredError -= MediaPlayer_Error; // 解除新错误处理的绑定
+
+                // 停止并销毁
+                _mediaPlayer.Stop();
+                _mediaPlayer.Dispose();
+            }
+
+            // 2. (新建) 创建一个 100% 干净的播放器实例
+            _mediaPlayer = new MediaPlayer(_libVLC);
+
+            // 3. (重新绑定) 将所有事件重新绑定到新实例上
+            _mediaPlayer.LengthChanged += MediaPlayer_LengthChanged;
+            _mediaPlayer.TimeChanged += MediaPlayer_TimeChanged;
+            _mediaPlayer.Playing += MediaPlayer_Playing;
+            _mediaPlayer.EndReached += MediaPlayer_EndReached;
+            _mediaPlayer.EncounteredError += MediaPlayer_Error; // 绑定新的全局错误处理
+
+            // 4. (重新分配) 将新播放器分配给UI
+            VideoView.MediaPlayer = _mediaPlayer;
+        }
+
+        /// <summary>
+        /// (新!) 全局播放器错误处理
+        /// </summary>
+        private void MediaPlayer_Error(object? sender, EventArgs e)
+        {
+            Dispatcher.Invoke(() =>
+            {
+                StatusText.Text = "❌ 播放器内核遇到错误！";
+            });
         }
 
         /// <summary>
@@ -198,6 +245,7 @@ namespace PlaybackApp
             {
                 // (重要!) 清除实时播放标志
                 _isLivePlayback = false;
+                _isRtspPlayback = false; // <== (新!) 明确清除RTSP标志
 
                 // 2. (新!) 创建一个 Progress 对象，它会自动在UI线程上更新 StatusText
                 var progress = new Progress<string>(message =>
@@ -227,14 +275,16 @@ namespace PlaybackApp
 
                 if (_libVLC != null && _mediaPlayer != null)
                 {
-                    // (修复!) 不要使用 using，让 Media 对象在播放期间保持存活
-                    var media = new Media(_libVLC, new Uri(clipPath));
+                    // (!!! 关键修复 !!!) 
+                    // 用 "重建" 替换 "停止"
+                    InitializeMediaPlayer();
 
-                    // (新!) 禁用循环播放
+                    // (!!! 关键修复 !!!) 
+                    // 必须指定 UriKind.Absolute 才能正确加载本地文件
+                    var media = new Media(_libVLC, new Uri(clipPath, UriKind.Absolute));
                     media.AddOption(":no-loop");
                     media.AddOption(":no-repeat");
-
-                    // 开始播放
+                    
                     _mediaPlayer.Play(media);
                 }
                 else
@@ -288,13 +338,20 @@ namespace PlaybackApp
 
                 // (重要!) 设置实时播放标志，告诉 Playing 事件处理器需要跳转到末尾
                 _isLivePlayback = true;
+                _isRtspPlayback = false; // <== (新!) 明确清除RTSP标志
 
                 // (新!) 启动定时器，定期检查是否有新文件
                 _liveMonitorTimer?.Start();
 
                 // 创建 Media 对象并添加低延迟选项
-                var media = new Media(_libVLC, latestFile);
+                // (!!! 关键修复 !!!) 
+                // 必须指定 UriKind.Absolute 才能正确加载本地文件
+                var media = new Media(_libVLC, new Uri(latestFile, UriKind.Absolute));
                 media.AddOption(":live-caching=300");
+
+                // (!!! 关键修复 2 !!!) 
+                // 用 "重建" 替换 "停止"
+                InitializeMediaPlayer();
 
                 // 直接播放，跳转逻辑在 MediaPlayer_Playing 事件中处理
                 _mediaPlayer.Play(media);
@@ -307,6 +364,76 @@ namespace PlaybackApp
             {
                 BtnPlayLive.IsEnabled = true; // 恢复实时按钮
                 BtnPlay.IsEnabled = true;     // 恢复查询按钮
+            }
+        }
+
+        /// <summary>
+        /// "真实时 RTSP 播放" 按钮的点击事件
+        /// 直接连接 RTSP 流，无需文件轮询，实现真正的实时播放
+        /// </summary>
+        private void BtnPlayRtsp_Click(object sender, RoutedEventArgs e)
+        {
+            // 检查播放器是否已初始化
+            if (_libVLC == null || _mediaPlayer == null)
+            {
+                StatusText.Text = "错误：播放器未初始化";
+                return;
+            }
+
+            StatusText.Text = "正在连接 RTSP 实时流...";
+
+            // 停止所有基于文件的旧逻辑
+            _liveMonitorTimer?.Stop();
+            _currentLiveFilePath = null;
+            _isLivePlayback = false;
+            _isRtspPlayback = true; // <== (新!) 明确设置RTSP标志
+
+            try
+            {
+                // 定义 RTSP 流地址
+                // 注意: 如果 WPF 客户端和 MediaMTX 服务器不在同一台电脑，
+                // 请将 "localhost" 替换为服务器的 IP 地址
+                string rtspUrl = "rtsp://localhost:8554/live_stream";
+
+                StatusText.Text = $"正在连接: {rtspUrl}";
+
+                // (移除这里的自定义错误事件监听)
+                // 因为 InitializeMediaPlayer() 已经添加了一个全局的
+
+                // 创建 Media 对象 - 使用更兼容的方式
+                var media = new Media(_libVLC, new Uri(rtspUrl));
+
+                // 为网络流添加特定的低延迟选项
+                media.AddOption(":network-caching=1000");  // 增加到 1000ms 确保稳定
+                media.AddOption(":rtsp-tcp");              // 强制使用 TCP 连接
+                media.AddOption(":live-caching=1000");     // 实时流缓冲
+                
+                // (调试!) 添加详细日志
+                media.AddOption("--verbose=2");
+
+                // (!!! 关键修复 !!!) 
+                // 用 "重建" 替换 "停止"
+                InitializeMediaPlayer();
+
+                // 直接播放 RTSP 流
+                _mediaPlayer.Play(media);
+
+                // (修复!) 不要立即显示"已连接"，等待 Playing 事件
+                StatusText.Text = "⏳ 正在缓冲 RTSP 流...";
+            }
+            catch (Exception ex)
+            {
+                StatusText.Text = $"RTSP 播放失败: {ex.Message}";
+                MessageBox.Show(
+                    $"无法连接到 RTSP 流。\n\n" +
+                    $"错误信息: {ex.Message}\n\n" +
+                    $"请确保：\n" +
+                    $"1. MediaMTX 服务器正在运行 (运行 start_rtsp_server.bat)\n" +
+                    $"2. CaptureService 正在推流\n" +
+                    $"3. 防火墙允许端口 8554",
+                    "连接错误",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
             }
         }
 
@@ -364,46 +491,62 @@ namespace PlaybackApp
         /// </summary>
         private void MediaPlayer_Playing(object? sender, EventArgs e)
         {
-            // 只有在"实时播放"模式下才跳转到末尾
-            if (_isLivePlayback && _mediaPlayer != null && _mediaPlayer.IsSeekable)
+            // (逻辑重构) 使用新的标志来区分三种模式
+
+            // 模式 1: "伪实时" (文件轮询)
+            if (_isLivePlayback)
             {
-                // (美化方案!) 跳转期间隐藏视频，避免看到绿屏
-                Dispatcher.BeginInvoke(new Action(() =>
+                // (此部分逻辑保持不变)
+                // 只有在"实时播放"模式下才跳转到末尾
+                if (_mediaPlayer != null && _mediaPlayer.IsSeekable)
                 {
-                    if (_mediaPlayer != null && _mediaPlayer.Length > 0)
+                    Dispatcher.BeginInvoke(new Action(() =>
                     {
-                        // 1. 隐藏视频控件
-                        VideoView.Visibility = Visibility.Hidden;
-                        StatusText.Text = "正在跳转到实时位置，请稍候...";
-
-                        // 2. 计算目标位置（最后30秒）
-                        long thirtySecondsInMs = 30 * 1000;
-                        long targetTime = Math.Max(0, _mediaPlayer.Length - thirtySecondsInMs);
-
-                        // 3. 使用 Time 跳转
-                        _mediaPlayer.Time = targetTime;
-
-                        // 4. 等待4.5秒让跳转完成，然后显示视频
-                        Task.Delay(4500).ContinueWith(_ =>
+                        if (_mediaPlayer != null && _mediaPlayer.Length > 0)
                         {
-                            Dispatcher.Invoke(() =>
-                            {
-                                VideoView.Visibility = Visibility.Visible;
-                                StatusText.Text = "正在播放实时画面...";
-                            });
-                        });
-                    }
-                }));
+                            // 1. 隐藏视频控件
+                            VideoView.Visibility = Visibility.Hidden;
+                            StatusText.Text = "正在跳转到实时位置，请稍候...";
 
-                // 清除标志，避免重复跳转
+                            // 2. 计算目标位置（最后30秒）
+                            long thirtySecondsInMs = 30 * 1000;
+                            long targetTime = Math.Max(0, _mediaPlayer.Length - thirtySecondsInMs);
+
+                            // 3. 使用 Time 跳转
+                            _mediaPlayer.Time = targetTime;
+
+                            // 4. 等待4.5秒让跳转完成，然后显示视频
+                            Task.Delay(4500).ContinueWith(_ =>
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    VideoView.Visibility = Visibility.Visible;
+                                    StatusText.Text = "正在播放实时画面...";
+                                });
+                            });
+                        }
+                    }));
+                }
                 _isLivePlayback = false;
             }
-            else
+            // 模式 2: "真实时" (RTSP流)
+            else if (_isRtspPlayback)
             {
-                // (修复!) 确保非实时播放模式下视频是可见的
+                // (新!) 这是专门为RTSP准备的逻辑
                 Dispatcher.BeginInvoke(new Action(() =>
                 {
                     VideoView.Visibility = Visibility.Visible;
+                    StatusText.Text = "🟢 RTSP 实时流播放中 (亚秒级延迟)";
+                }));
+            }
+            // 模式 3: "历史回放" (剪辑文件)
+            else
+            {
+                // (新!) 这是专门为历史回放准备的逻辑
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    VideoView.Visibility = Visibility.Visible;
+                    StatusText.Text = "正在播放剪辑文件...";
                 }));
             }
         }
@@ -464,8 +607,14 @@ namespace PlaybackApp
                         // 播放（或重新播放）最新文件
                         if (_libVLC != null && _mediaPlayer != null)
                         {
-                            var media = new Media(_libVLC, latestFile);
+                            // (!!! 关键修复 !!!) 
+                            // 必须指定 UriKind.Absolute 才能正确加载本地文件
+                            var media = new Media(_libVLC, new Uri(latestFile, UriKind.Absolute));
                             media.AddOption(":live-caching=300");
+                            
+                            // (!!! 关键修复 !!!) 用 "重建" 替换 "停止"
+                            InitializeMediaPlayer();
+                            
                             _mediaPlayer.Play(media);
                         }
                     }

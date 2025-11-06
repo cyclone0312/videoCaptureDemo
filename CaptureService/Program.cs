@@ -123,7 +123,7 @@ class Program
                 // %H - 2位小时 (00-23)
                 // %M - 2位分钟 (00-59)
                 // %S - 2位秒数 (00-59)
-                // 示例输出：CAM_USB-20251104-143025.mp4
+                // 示例输出:CAM_USB-20251104-143025.mp4
                 string outputTemplate = Path.Combine(outputDirectory, "CAM_USB-%Y%m%d-%H%M%S.mp4");
 
                 Console.WriteLine($"Starting FFmpeg capture...");
@@ -131,7 +131,8 @@ class Program
                 Console.WriteLine($"  Audio: {audioDeviceName}");
 
                 // ============================================================
-                // 步骤 5: (关键改动) 构建包含音视频和时间戳水印的 FFmpeg 参数
+                // 步骤 5: (还原!) 构建包含音视频和时间戳水印的 FFmpeg 参数
+                // (重要!) 不再使用 tee muxer，只负责录制文件
                 // ============================================================
                 // (新增!) 构建 drawtext 滤镜
                 //
@@ -151,31 +152,39 @@ class Program
                     "x=w-tw-15:" +
                     "y=15";
 
-                // 完整命令相当于在命令行执行：
-                // ffmpeg -f dshow -i video="设备名":audio="音频设备名" -vf "drawtext=..." -c:v libx264 -preset ultrafast -pix_fmt yuv420p -c:a aac -f segment -segment_time 600 -strftime 1 -segment_format_options movflags=frag_keyframe+empty_moov "输出路径"
+                // (新!) 定义 RTSP 推流地址
+                string rtspStreamUrl = "rtsp://localhost:8554/live_stream";
+
+                // (!!! 重要 !!!) 对文件路径中的反斜杠进行转义
+                // 在 tee muxer 内部，反斜杠需要双重转义：
+                // C# 中: \\\\  ->  编译后: \\  ->  FFmpeg 的 tee 解析后: \
+                string escapedOutputTemplate = outputTemplate.Replace("\\", "\\\\\\\\");
+
+                // ============================================================
+                // (关键修改!) 构建最终的 Tee Muxer FFmpeg 参数
+                // ============================================================
+                // 我们将文件录制和RTSP推流合并到一个进程中：
+                // 1. (输入) 使用 -re -f dshow... 以实时速率读取
+                // 2. (编码) 使用统一的编码参数
+                // 3. (关键!) 使用 -map 指定要输出的流
+                // 4. (输出) 使用 -f tee 同时输出到文件和RTSP
                 //
-                // 各参数详解：
-                // -f dshow                      指定使用 DirectShow 输入格式 (Windows 系统专用)
-                // -i video="...":audio="..."    (关键) 同时指定视频和音频输入源
-                // -vf "drawtext=..."            (新增!) 添加视频滤镜，在视频上烧录时间戳水印
-                // -c:v libx264                  使用 H.264 编码器压缩视频 (必须编码，不能用 copy)
-                // -preset ultrafast             编码速度预设为"超快"，降低CPU占用，但文件会稍大
-                // -pix_fmt yuv420p              设置像素格式为 YUV 4:2:0，确保最广泛的播放器兼容性
-                // -c:a aac                      使用 AAC 编码器压缩音频
-                // -f segment                    使用分段输出格式，自动将长视频切割成多个文件
-                // -segment_time 600             每个分段的时长 (秒)，600秒 = 10分钟
-                // -strftime 1                   启用时间戳文件名功能，支持 %Y %m %d 等变量
-                // -segment_format_options movflags=frag_keyframe+empty_moov
-                //                               (关键!) 生成 Fragmented MP4，使正在录制的文件可实时播放
-                //                               frag_keyframe: 按关键帧创建分片
-                //                               empty_moov: 在文件开头写入空索引，支持流式传输
-                string ffmpegArgs = $"-f dshow -i video=\"{videoDeviceName}\":audio=\"{audioDeviceName}\" " +
-                    $"-vf \"{drawtextFilter}\" " +  // (新增!) 添加时间戳水印滤镜
-                    $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p " +
-                    $"-c:a aac " +
-                    $"-f segment -segment_time 600 -strftime 1 " +
-                    $"-segment_format_options movflags=frag_keyframe+empty_moov " +
-                    $"\"{outputTemplate}\"";
+                // tee muxer 格式：
+                // -map 0 -f tee "[options1]output1|[options2]output2"
+                // 目标1: segment格式的分片fMP4文件
+                // 目标2: RTSP推流
+                string ffmpegArgs = $"-re -f dshow -i video=\"{videoDeviceName}\":audio=\"{audioDeviceName}\" " +
+                    $"-vf \"{drawtextFilter}\" " +
+                    // 统一的、对 RTSP 和 fMP4 都友好的编码参数
+                    $"-c:v libx264 -preset ultrafast -pix_fmt yuv420p -g 50 " +
+                    $"-c:a aac -ar 44100 -b:a 128k " +
+                    // (!!! 关键修复 !!!) 添加 -map 0 将所有输入流映射到输出
+                    $"-map 0 " +
+                    // 指定 "tee" Muxer
+                    $"-f tee " +
+                    // 目标1 (录制) 和 目标2 (推流)
+                    // 注意：使用转义后的路径
+                    $"\"[f=segment:segment_time=600:strftime=1:segment_format_options=movflags=frag_keyframe+empty_moov]{escapedOutputTemplate}|[f=rtsp:rtsp_transport=tcp]{rtspStreamUrl}\"";
 
                 Console.WriteLine($"FFmpeg arguments: {ffmpegArgs}");
 

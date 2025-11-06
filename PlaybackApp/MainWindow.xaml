@@ -8,8 +8,8 @@
         xmlns:xctk="http://schemas.xceed.com/wpf/xaml/toolkit"
         mc:Ignorable="d"
         Title="视频回放系统 - LibVLC 播放器"
-        Height="720"
-        Width="1000"
+       Height="900"
+        Width="1280"
         MinHeight="600"
         MinWidth="800"
         WindowStartupLocation="CenterScreen"
@@ -95,6 +95,26 @@
                         </Style.Triggers>
                 </Style>
 
+                <!-- RTSP 实时播放按钮样式 (绿色) -->
+                <Style x:Key="RtspButton"
+                       TargetType="Button"
+                       BasedOn="{StaticResource ModernButton}">
+                        <Setter Property="Background"
+                                Value="#FF28A745"/>
+                        <Style.Triggers>
+                                <Trigger Property="IsMouseOver"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FF218838"/>
+                                </Trigger>
+                                <Trigger Property="IsPressed"
+                                         Value="True">
+                                        <Setter Property="Background"
+                                                Value="#FF1E7E34"/>
+                                </Trigger>
+                        </Style.Triggers>
+                </Style>
+
                 <!-- TextBlock 样式 -->
                 <Style x:Key="LabelText"
                        TargetType="TextBlock">
@@ -176,10 +196,19 @@
                                                 Click="BtnPlay_Click"/>
 
                                         <Button x:Name="BtnPlayLive"
-                                                Content="🔴 伪播放实时流 (30s延迟)"
+                                                Content="� 伪实时 (文件轮询)"
                                                 Style="{StaticResource LiveButton}"
-                                                Width="200"
-                                                Click="BtnPlayLive_Click"/>
+                                                Width="180"
+                                                Click="BtnPlayLive_Click"
+                                                ToolTip="基于文件轮询的伪实时播放 (约30秒延迟)"/>
+
+                                        <Button x:Name="BtnPlayRtsp"
+                                                Content="🟢 真实时 (RTSP流)"
+                                                Style="{StaticResource RtspButton}"
+                                                Width="180"
+                                                Margin="15,0,0,0"
+                                                Click="BtnPlayRtsp_Click"
+                                                ToolTip="基于RTSP协议的真实时播放 (亚秒级延迟)"/>
                                 </StackPanel>
                         </Border>
 
