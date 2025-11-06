@@ -1,0 +1,24 @@
+# Binaries
+bin/
+obj/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# NuGet
+*.nupkg
+packages/
+
+# Rider
+*.sln.iml
+
+# User-specific files
+*.user
