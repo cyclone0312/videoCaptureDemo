@@ -67,24 +67,10 @@ namespace PlaybackApp
         // 3. (关键改动) 在窗口加载时初始化 VLC
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
-            // 清理旧日志并开始新日志
-            DebugLogger.CleanOldLogs(7);
-            DebugLogger.Log("========================================");
-            DebugLogger.Log("=== 应用程序启动 ===");
-            DebugLogger.Log("========================================");
-
-            Debug.WriteLine("========================================");
-            Debug.WriteLine("=== [Debug Output] 应用程序启动 ===");
-            Debug.WriteLine("========================================");
-
             // 初始化 VLC 核心
             Core.Initialize();
-            DebugLogger.Log("✓ VLC 核心初始化完成");
-            Debug.WriteLine("✓ [Debug Output] VLC 核心初始化完成");
 
             _libVLC = new LibVLC();
-            DebugLogger.Log("✓ LibVLC 实例创建成功");
-            Debug.WriteLine("✓ [Debug Output] LibVLC 实例创建成功");
 
             // (关键修改!) 调用辅助函数来创建第一个播放器实例
             InitializeMediaPlayer();
@@ -96,11 +82,6 @@ namespace PlaybackApp
             _rewindTimer.Interval = TimeSpan.FromMilliseconds(250); // 每 250 毫秒跳转一次
             _rewindTimer.Tick += RewindTimer_Tick;
 
-            DebugLogger.Log("✓ 快退定时器初始化完成 (间隔: 250ms)");
-            Debug.WriteLine("✓ [Debug Output] 快退定时器初始化完成");
-
-            DebugLogger.Log("=== 初始化完成，等待用户操作 ===");
-            Debug.WriteLine("=== [Debug Output] 初始化完成 ===");
             // (已移除!) 不再需要初始化 _liveMonitorTimer
         }
 
@@ -438,9 +419,6 @@ namespace PlaybackApp
                 // 3. 执行跳转
                 _mediaPlayer.Position = _targetSeekPosition;
 
-                DebugLogger.Log($"🎯 进度条跳转 - 目标位置: {_targetSeekPosition:F3} ({_targetSeekPosition * 100:F1}%), _isSeeking 已设置");
-                Debug.WriteLine($"🎯 [Debug Output] 进度条跳转到 {_targetSeekPosition:F3}");
-
                 // (!!! 关键修复 !!!)
                 // 4. 添加一个保险机制：500ms 后自动清除 _isSeeking 标志
                 // 这样即使位置检查失败，也不会永久卡住
@@ -451,8 +429,6 @@ namespace PlaybackApp
                         if (_isSeeking)
                         {
                             _isSeeking = false;
-                            DebugLogger.Log("⏱️ 跳转超时 (500ms) - 自动清除 _isSeeking 标志");
-                            Debug.WriteLine("⏱️ [Debug Output] 跳转超时，自动清除");
                         }
                     });
                 });
@@ -728,6 +704,14 @@ namespace PlaybackApp
         /// </summary>
         private void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
         {
+            // (!!! 关键修复 !!!)
+            // 检查焦点是否在可编辑的输入控件上 (例如 DateTimePicker, TextBox 等)
+            // 如果是，则不处理快捷键，让控件自己处理
+            if (IsInputFocused())
+            {
+                return; // 直接返回，不标记 e.Handled，让控件正常处理
+            }
+
             // 如果播放器不存在，则不执行任何操作
             if (_mediaPlayer == null) return;
 
@@ -744,9 +728,6 @@ namespace PlaybackApp
 
                 // 功能2: 按住右键 3倍快进
                 case System.Windows.Input.Key.Right:
-                    DebugLogger.Log($"🎮 右键按下 - IsPlaying:{_mediaPlayer.IsPlaying}, IsSeekable:{_mediaPlayer.IsSeekable}, IsRepeat:{e.IsRepeat}, FastForwarding:{_isFastForwarding}, Seeking:{_isSeeking}");
-                    Debug.WriteLine($"🎮 [Debug Output] 右键按下 - IsPlaying:{_mediaPlayer.IsPlaying}, Seeking:{_isSeeking}");
-
                     // 仅当 1) 正在播放 2) 可变速 3) 且 *不是* 重复按键时才设置
                     if (_mediaPlayer.IsPlaying && _mediaPlayer.IsSeekable && !e.IsRepeat && !_isFastForwarding)
                     {
@@ -757,21 +738,10 @@ namespace PlaybackApp
                         _isFastForwarding = true;
                         _mediaPlayer.SetRate(3.0f);
                         StatusText.Text = "⏩ 快进中 (3倍速)...";
-
-                        DebugLogger.Log($"✓ 快进开始 - 速率设置为 3.0x，当前位置: {_mediaPlayer.Position:F3}");
-                        Debug.WriteLine($"✓ [Debug Output] 快进开始 - 3.0x 速率");
-                    }
-                    else
-                    {
-                        DebugLogger.Log("❌ 快进条件不满足，无法启动");
-                        Debug.WriteLine("❌ [Debug Output] 快进条件不满足");
                     }
                     e.Handled = true;
                     break;                // (新!) 功能3: 左键快退 (使用定时器)
                 case System.Windows.Input.Key.Left:
-                    DebugLogger.Log($"🎮 左键按下 - IsSeekable:{_mediaPlayer.IsSeekable}, IsRewinding:{_isRewinding}, IsRepeat:{e.IsRepeat}, Seeking:{_isSeeking}");
-                    Debug.WriteLine($"🎮 [Debug Output] 左键按下 - IsSeekable:{_mediaPlayer.IsSeekable}, Rewinding:{_isRewinding}");
-
                     // 仅在 *第一次* 按下时启动定时器
                     // 移除 IsPlaying 检查，允许在暂停状态下也能快退
                     if (_mediaPlayer.IsSeekable && !_isRewinding && !e.IsRepeat)
@@ -784,14 +754,6 @@ namespace PlaybackApp
                         _rewindTimer?.Start();
                         // 立即执行一次，获得即时反馈
                         RewindTimer_Tick(null, EventArgs.Empty);
-
-                        DebugLogger.Log($"✓ 快退开始 - 定时器已启动，当前位置: {_mediaPlayer.Position:F3}");
-                        Debug.WriteLine($"✓ [Debug Output] 快退开始 - 定时器启动");
-                    }
-                    else
-                    {
-                        DebugLogger.Log("❌ 快退条件不满足，无法启动");
-                        Debug.WriteLine("❌ [Debug Output] 快退条件不满足");
                     }
                     e.Handled = true;
                     break;
@@ -799,10 +761,47 @@ namespace PlaybackApp
         }
 
         /// <summary>
+        /// (!!! 新增 !!!)
+        /// 检查当前焦点是否在可编辑的输入控件上
+        /// </summary>
+        private bool IsInputFocused()
+        {
+            var focusedElement = System.Windows.Input.FocusManager.GetFocusedElement(this);
+
+            // 检查是否是文本输入控件
+            if (focusedElement is System.Windows.Controls.TextBox)
+            {
+                return true;
+            }
+
+            // 检查是否是 DateTimePicker 或其内部控件
+            // DateTimePicker 内部包含 TextBox，需要向上遍历可视树查找
+            var parent = focusedElement as DependencyObject;
+            while (parent != null)
+            {
+                // 检查类型名称是否包含 DateTimePicker
+                if (parent.GetType().Name.Contains("DateTimePicker"))
+                {
+                    return true;
+                }
+                parent = System.Windows.Media.VisualTreeHelper.GetParent(parent);
+            }
+
+            return false;
+        }
+
+        /// <summary>
         /// 当按键被松开时触发
         /// </summary>
         private void Window_KeyUp(object sender, System.Windows.Input.KeyEventArgs e)
         {
+            // (!!! 关键修复 !!!)
+            // 同样需要检查焦点，如果在输入控件上则跳过处理
+            if (IsInputFocused())
+            {
+                return;
+            }
+
             if (_mediaPlayer == null) return;
 
             // 当"快进"的右键被松开时，恢复 1.0x 正常速度
@@ -812,9 +811,6 @@ namespace PlaybackApp
                 {
                     _mediaPlayer.SetRate(1.0f);
                     _isFastForwarding = false;
-
-                    DebugLogger.Log($"⏸️ 快进结束 - 恢复正常速度 1.0x，最终位置: {_mediaPlayer.Position:F3}");
-                    Debug.WriteLine("⏸️ [Debug Output] 快进结束，恢复 1.0x");
 
                     // 恢复状态文本
                     if (_currentLiveFilePath != null)
@@ -834,9 +830,6 @@ namespace PlaybackApp
             {
                 _rewindTimer?.Stop();
                 _isRewinding = false;
-
-                DebugLogger.Log($"⏸️ 快退结束 - 定时器已停止，最终位置: {_mediaPlayer?.Position:F3}");
-                Debug.WriteLine("⏸️ [Debug Output] 快退结束，定时器停止");
 
                 // (修复!) 恢复状态文本
                 if (_currentLiveFilePath != null)

@@ -40,15 +40,14 @@
             {
               "$type": "Document",
               "DocumentIndex": 1,
-              "Title": "PlaybackApp",
+              "Title": "PlaybackApp.csproj",
               "DocumentMoniker": "D:\\Code2025\\C##\\ffmpegDemo\\PlaybackApp\\PlaybackApp.csproj",
               "RelativeDocumentMoniker": "PlaybackApp\\PlaybackApp.csproj",
               "ToolTip": "D:\\Code2025\\C##\\ffmpegDemo\\PlaybackApp\\PlaybackApp.csproj",
               "RelativeToolTip": "PlaybackApp\\PlaybackApp.csproj",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000758|",
-              "WhenOpened": "2025-11-08T03:46:38.41Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-11-08T03:46:38.41Z"
             },
             {
               "$type": "Document",
@@ -59,8 +58,7 @@
               "ToolTip": "D:\\Code2025\\C##\\ffmpegDemo\\PlaybackApp\\MainWindow.xaml",
               "RelativeToolTip": "PlaybackApp\\MainWindow.xaml",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.003549|",
-              "WhenOpened": "2025-11-07T03:46:28.957Z",
-              "EditorCaption": ""
+              "WhenOpened": "2025-11-07T03:46:28.957Z"
             }
           ]
         }
