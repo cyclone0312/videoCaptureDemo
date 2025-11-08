@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics; // 添加 Debug 支持
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -66,10 +67,24 @@ namespace PlaybackApp
         // 3. (关键改动) 在窗口加载时初始化 VLC
         private void Window_Loaded(object sender, RoutedEventArgs e)
         {
+            // 清理旧日志并开始新日志
+            DebugLogger.CleanOldLogs(7);
+            DebugLogger.Log("========================================");
+            DebugLogger.Log("=== 应用程序启动 ===");
+            DebugLogger.Log("========================================");
+
+            Debug.WriteLine("========================================");
+            Debug.WriteLine("=== [Debug Output] 应用程序启动 ===");
+            Debug.WriteLine("========================================");
+
             // 初始化 VLC 核心
             Core.Initialize();
+            DebugLogger.Log("✓ VLC 核心初始化完成");
+            Debug.WriteLine("✓ [Debug Output] VLC 核心初始化完成");
 
             _libVLC = new LibVLC();
+            DebugLogger.Log("✓ LibVLC 实例创建成功");
+            Debug.WriteLine("✓ [Debug Output] LibVLC 实例创建成功");
 
             // (关键修改!) 调用辅助函数来创建第一个播放器实例
             InitializeMediaPlayer();
@@ -81,6 +96,11 @@ namespace PlaybackApp
             _rewindTimer.Interval = TimeSpan.FromMilliseconds(250); // 每 250 毫秒跳转一次
             _rewindTimer.Tick += RewindTimer_Tick;
 
+            DebugLogger.Log("✓ 快退定时器初始化完成 (间隔: 250ms)");
+            Debug.WriteLine("✓ [Debug Output] 快退定时器初始化完成");
+
+            DebugLogger.Log("=== 初始化完成，等待用户操作 ===");
+            Debug.WriteLine("=== [Debug Output] 初始化完成 ===");
             // (已移除!) 不再需要初始化 _liveMonitorTimer
         }
 
@@ -89,6 +109,10 @@ namespace PlaybackApp
         {
             if (_mediaPlayer != null && _mediaPlayer.IsSeekable)
             {
+                // (!!! 关键修复 !!!)
+                // 每次快退时都强制清除跳转标志，防止被 TimeChanged 事件干扰
+                _isSeeking = false;
+
                 // (改动!) 使用 Position 而不是 Time 来避免花屏
                 // 计算向后跳转的百分比 (约1秒)
                 float currentPosition = _mediaPlayer.Position;
@@ -413,6 +437,25 @@ namespace PlaybackApp
 
                 // 3. 执行跳转
                 _mediaPlayer.Position = _targetSeekPosition;
+
+                DebugLogger.Log($"🎯 进度条跳转 - 目标位置: {_targetSeekPosition:F3} ({_targetSeekPosition * 100:F1}%), _isSeeking 已设置");
+                Debug.WriteLine($"🎯 [Debug Output] 进度条跳转到 {_targetSeekPosition:F3}");
+
+                // (!!! 关键修复 !!!)
+                // 4. 添加一个保险机制：500ms 后自动清除 _isSeeking 标志
+                // 这样即使位置检查失败，也不会永久卡住
+                Task.Delay(500).ContinueWith(_ =>
+                {
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (_isSeeking)
+                        {
+                            _isSeeking = false;
+                            DebugLogger.Log("⏱️ 跳转超时 (500ms) - 自动清除 _isSeeking 标志");
+                            Debug.WriteLine("⏱️ [Debug Output] 跳转超时，自动清除");
+                        }
+                    });
+                });
             }
         }
 
@@ -579,8 +622,13 @@ namespace PlaybackApp
                 return;
             }
 
+            // (!!! 关键修复 !!!)
+            // 如果正在快进或快退，完全跳过 _isSeeking 检查和节流机制
+            // 因为快进/快退是"主动操作"，必须立即响应
+            bool isActiveControl = _isFastForwarding || _isRewinding;
+
             // (新!) 如果我们正在等待跳转...
-            if (_isSeeking)
+            if (_isSeeking && !isActiveControl)
             {
                 // 检查播放器报告的当前位置是否已经 "接近" 我们的目标位置
                 // (使用 0.02 (2%) 作为误差范围)
@@ -595,19 +643,21 @@ namespace PlaybackApp
                     // 立即停止，不要更新滑块的 UI
                     return;
                 }
-            }
-
-            // (不变) 只有当不在拖动且不在等待跳转时，才更新 UI
+            }            // (不变) 只有当不在拖动且不在等待跳转时，才更新 UI
             // (_isSeeking 标志在上面刚刚被我们解除)
 
             // (新!) 节流机制：限制更新频率，避免快进时进度条更新过快
-            var now = DateTime.Now;
-            if ((now - _lastProgressUpdate).TotalMilliseconds < ProgressUpdateIntervalMs)
+            // (!!! 修复 !!!) 但在快进/快退时不要节流
+            if (!isActiveControl)
             {
-                // 距离上次更新时间太短，跳过本次更新
-                return;
+                var now = DateTime.Now;
+                if ((now - _lastProgressUpdate).TotalMilliseconds < ProgressUpdateIntervalMs)
+                {
+                    // 距离上次更新时间太短，跳过本次更新
+                    return;
+                }
+                _lastProgressUpdate = now;
             }
-            _lastProgressUpdate = now;
 
             Dispatcher.Invoke(() =>
             {
@@ -694,26 +744,54 @@ namespace PlaybackApp
 
                 // 功能2: 按住右键 3倍快进
                 case System.Windows.Input.Key.Right:
+                    DebugLogger.Log($"🎮 右键按下 - IsPlaying:{_mediaPlayer.IsPlaying}, IsSeekable:{_mediaPlayer.IsSeekable}, IsRepeat:{e.IsRepeat}, FastForwarding:{_isFastForwarding}, Seeking:{_isSeeking}");
+                    Debug.WriteLine($"🎮 [Debug Output] 右键按下 - IsPlaying:{_mediaPlayer.IsPlaying}, Seeking:{_isSeeking}");
+
                     // 仅当 1) 正在播放 2) 可变速 3) 且 *不是* 重复按键时才设置
                     if (_mediaPlayer.IsPlaying && _mediaPlayer.IsSeekable && !e.IsRepeat && !_isFastForwarding)
                     {
+                        // (!!! 关键修复 !!!)
+                        // 清除跳转标志，防止被 TimeChanged 阻塞
+                        _isSeeking = false;
+
                         _isFastForwarding = true;
                         _mediaPlayer.SetRate(3.0f);
                         StatusText.Text = "⏩ 快进中 (3倍速)...";
+
+                        DebugLogger.Log($"✓ 快进开始 - 速率设置为 3.0x，当前位置: {_mediaPlayer.Position:F3}");
+                        Debug.WriteLine($"✓ [Debug Output] 快进开始 - 3.0x 速率");
+                    }
+                    else
+                    {
+                        DebugLogger.Log("❌ 快进条件不满足，无法启动");
+                        Debug.WriteLine("❌ [Debug Output] 快进条件不满足");
                     }
                     e.Handled = true;
-                    break;
-
-                // (新!) 功能3: 左键快退 (使用定时器)
+                    break;                // (新!) 功能3: 左键快退 (使用定时器)
                 case System.Windows.Input.Key.Left:
+                    DebugLogger.Log($"🎮 左键按下 - IsSeekable:{_mediaPlayer.IsSeekable}, IsRewinding:{_isRewinding}, IsRepeat:{e.IsRepeat}, Seeking:{_isSeeking}");
+                    Debug.WriteLine($"🎮 [Debug Output] 左键按下 - IsSeekable:{_mediaPlayer.IsSeekable}, Rewinding:{_isRewinding}");
+
                     // 仅在 *第一次* 按下时启动定时器
                     // 移除 IsPlaying 检查，允许在暂停状态下也能快退
                     if (_mediaPlayer.IsSeekable && !_isRewinding && !e.IsRepeat)
                     {
+                        // (!!! 关键修复 !!!)
+                        // 清除跳转标志，防止被 TimeChanged 阻塞
+                        _isSeeking = false;
+
                         _isRewinding = true;
                         _rewindTimer?.Start();
                         // 立即执行一次，获得即时反馈
                         RewindTimer_Tick(null, EventArgs.Empty);
+
+                        DebugLogger.Log($"✓ 快退开始 - 定时器已启动，当前位置: {_mediaPlayer.Position:F3}");
+                        Debug.WriteLine($"✓ [Debug Output] 快退开始 - 定时器启动");
+                    }
+                    else
+                    {
+                        DebugLogger.Log("❌ 快退条件不满足，无法启动");
+                        Debug.WriteLine("❌ [Debug Output] 快退条件不满足");
                     }
                     e.Handled = true;
                     break;
@@ -735,6 +813,9 @@ namespace PlaybackApp
                     _mediaPlayer.SetRate(1.0f);
                     _isFastForwarding = false;
 
+                    DebugLogger.Log($"⏸️ 快进结束 - 恢复正常速度 1.0x，最终位置: {_mediaPlayer.Position:F3}");
+                    Debug.WriteLine("⏸️ [Debug Output] 快进结束，恢复 1.0x");
+
                     // 恢复状态文本
                     if (_currentLiveFilePath != null)
                     {
@@ -753,6 +834,9 @@ namespace PlaybackApp
             {
                 _rewindTimer?.Stop();
                 _isRewinding = false;
+
+                DebugLogger.Log($"⏸️ 快退结束 - 定时器已停止，最终位置: {_mediaPlayer?.Position:F3}");
+                Debug.WriteLine("⏸️ [Debug Output] 快退结束，定时器停止");
 
                 // (修复!) 恢复状态文本
                 if (_currentLiveFilePath != null)

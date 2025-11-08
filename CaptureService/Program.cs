@@ -7,6 +7,7 @@ using System.Threading.Tasks;   // 用于异步编程支持
 using System.Collections.Generic; // 用于支持 List<string>
 using System.Text.RegularExpressions; // 用于更复杂的解析
 using System.Linq;              // 用于 LINQ 查询方法（如 FirstOrDefault）
+using System.Text;              // 用于编码处理
 
 /// <summary>
 /// USB摄像头视频采集服务 (V2 - 带自动设备发现)
@@ -301,7 +302,8 @@ class Program
             RedirectStandardOutput = true,
             RedirectStandardError = true,  // FFmpeg 将列表输出到 StandardError
             UseShellExecute = false,
-            CreateNoWindow = true
+            CreateNoWindow = true,
+            StandardErrorEncoding = Encoding.Default  // 修复编码问题，使用系统默认编码读取设备名称
         };
 
         using (var process = Process.Start(processInfo))
