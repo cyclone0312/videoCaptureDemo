@@ -256,7 +256,7 @@ rtcpAddress: :8001 # RTCP 端口
 如有问题或建议，请通过以下方式联系：
 
 - GitHub Issues: [提交问题](https://github.com/cyclone0312/videoCaptureDemo/issues)
-- Email: cyclone0312@example.com
+- Email: cyclone0312@gmail.com
 
 ---
 
